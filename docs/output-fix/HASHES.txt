@@ -1,0 +1,8 @@
+1930b58e95f28d490cf78fc678276bb2c55e67d1e7db64db0b5799d1f544f783  /home/ubuntu/luk_codex_bridge_v2/worker.py
+b0a11cbb24c16695351870544d844500fdbf4844749fc00f22a7df9267d5e874  /home/ubuntu/luk_codex_bridge_v2/database.py
+6ef202e3ca0abc867d512d956937748e9f976f4ec05eaeefef7232e4cd87e801  /home/ubuntu/luk_codex_bridge_v2/config.py
+dd11873f449137008f944f099ffa207ef69fd2b6f62922152b5cc616009c2e27  /tmp/codex-bridge-output-BJKSyrwe/worker.py
+62832e9b7bfeb494cce7d8f3a97a9e35d78154ef8e037c41f577f0c0088960b3  /tmp/codex-bridge-output-BJKSyrwe/config.py
+daaaaec1c2d0fe1c35613ed66550c1d4b89bff0225a0a06c424b10a6f30e0528  /tmp/codex-bridge-output-BJKSyrwe/mcp_server.py
+Python 3.10.12
+Linux aarch64

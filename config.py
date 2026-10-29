@@ -56,6 +56,9 @@ MCP_ALLOWED_ORIGINS = tuple(
     ).split(",")
     if origin.strip()
 )
-MAX_STDOUT_BYTES = 12_000
-MAX_STDERR_BYTES = 6_000
+# Hard per-task ceilings shared by capture and SQLite validation.
+# Results above the MCP page size remain complete in SQLite.
+MAX_STDOUT_BYTES = 2 * 1024 * 1024
+MAX_STDERR_BYTES = 256 * 1024
+RESULT_PAGE_CHARS = 3000
 PROCESS_TERMINATE_GRACE_SECONDS = 1.0

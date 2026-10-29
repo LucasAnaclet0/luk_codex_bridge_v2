@@ -352,13 +352,7 @@ def _run_bounded_process(
                 )
 
                 try:
-                    # stderr excedente deve continuar sendo drenado,
-                    # mas nunca armazenado além do limite.
-                    read_size = (
-                        4096
-                        if kind == "stderr" and len(capture) >= limit
-                        else min(4096, limit - len(capture) + 1)
-                    )
+                    read_size = min(4096, limit - len(capture) + 1)
                     chunk = os.read(stream.fileno(), read_size)
                 except OSError:
                     raise ExecutionUncertain(
@@ -376,13 +370,10 @@ def _run_bounded_process(
                     continue
 
                 if len(capture) + len(chunk) > limit:
-                    if kind == "stderr":
-                        remaining = limit - len(capture)
-                        if remaining > 0:
-                            capture.extend(chunk[:remaining])
-                        continue
-
-                    raise ExecutionUncertain("codex_output_limit_exceeded")
+                    raise ExecutionUncertain(
+                        "codex_output_limit_exceeded" if kind == "stdout"
+                        else "codex_stderr_limit_exceeded"
+                    )
 
                 capture.extend(chunk)
 

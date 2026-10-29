@@ -1,5 +1,6 @@
 """Authenticated MCP Streamable HTTP endpoint for the Codex task queue."""
 import hmac
+import hashlib
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
@@ -11,6 +12,7 @@ from config import (
     MCP_HOST,
     MCP_PORT,
     MAX_TASK_PROMPT_BYTES,
+    RESULT_PAGE_CHARS,
 )
 from database import create_task, get_task, initialize
 
@@ -53,11 +55,12 @@ def _tools():
         },
         {
             "name": "get_task",
-            "description": "Consulta estado e resultado de uma tarefa da bridge.",
+            "description": "Consulta tarefa e uma página do resultado. Para continuar, envie result_offset=next_result_offset até result_complete=true. Offsets contam caracteres Unicode.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "task_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"}
+                    "task_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+                    "result_offset": {"type": "integer", "minimum": 0},
                 },
                 "required": ["task_id"],
                 "additionalProperties": False,
@@ -76,8 +79,11 @@ def _tool_payload(name, arguments):
         task_id = create_task(DB_PATH, arguments.get("task"))
         payload = {"task_id": task_id, "status": "pending"}
     elif name == "get_task":
-        if set(arguments) != {"task_id"}:
+        if set(arguments) not in ({"task_id"}, {"task_id", "result_offset"}):
             raise ValueError("invalid tool arguments")
+        offset = arguments.get("result_offset", 0)
+        if type(offset) is not int or offset < 0:
+            raise ValueError("invalid result offset")
         task_id = arguments.get("task_id", "")
         if (
             not isinstance(task_id, str)
@@ -90,6 +96,21 @@ def _tool_payload(name, arguments):
             key: row[key]
             for key in ("id", "status", "created_at", "updated_at", "result", "error")
         }
+        if payload is not None:
+            result = payload["result"]
+            total = len(result) if result is not None else 0
+            if offset > total:
+                raise ValueError("invalid result offset")
+            end = min(offset + RESULT_PAGE_CHARS, total)
+            payload.update(
+                result=None if result is None else result[offset:end],
+                result_offset=offset,
+                result_total_chars=total,
+                result_total_bytes=0 if result is None else len(result.encode("utf-8")),
+                result_sha256=None if result is None else hashlib.sha256(result.encode("utf-8")).hexdigest(),
+                result_complete=end == total,
+                next_result_offset=None if end == total else end,
+            )
     else:
         raise KeyError("unknown tool")
     return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}], "isError": False}
