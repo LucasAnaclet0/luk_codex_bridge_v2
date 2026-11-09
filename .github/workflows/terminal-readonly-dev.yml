@@ -11,6 +11,8 @@ on:
       - 'terminal_readonly.py'
       - 'mcp_server.py'
       - 'tests/test_terminal_readonly.py'
+      - 'tests/test_bootstrap_terminal.py'
+      - 'tools/bootstrap_terminal_readonly.py'
       - '.github/workflows/terminal-readonly-dev.yml'
 
 permissions:
@@ -27,6 +29,8 @@ jobs:
         with:
           python-version: '3.10'
       - name: Static syntax validation
-        run: python -m py_compile terminal_readonly.py mcp_server.py tests/test_terminal_readonly.py
+        run: python -m py_compile terminal_readonly.py mcp_server.py tests/test_terminal_readonly.py tools/bootstrap_terminal_readonly.py tests/test_bootstrap_terminal.py
       - name: Read-only terminal unit tests
         run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_terminal_readonly.py' -v
+      - name: Bootstrap offline unit tests
+        run: PYTHONPATH=. python -m unittest discover -s tests -p 'test_bootstrap_terminal.py' -v
