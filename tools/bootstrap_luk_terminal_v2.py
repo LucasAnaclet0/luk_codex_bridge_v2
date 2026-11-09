@@ -24,9 +24,9 @@ SERVICE = "luk-codex-mcp.service"
 MARKER = "# LUK_TERMINAL_V2_MAIN_MAINTENANCE"
 PINNED_MODULE_URL = (
     "https://raw.githubusercontent.com/LucasAnaclet0/luk_codex_bridge_v2/"
-    "05a93fd4cd7bb4f9d3c88bc35aabb94590a5669e/luk_main_maintenance_v2.py"
+    "858efad354473e673c5798a1ce01408cd896a65e/luk_main_maintenance_v2.py"
 )
-EXPECTED_MODULE_GIT_BLOB = "33e095c019ee2cc98efd0ab8c70bf9f0fe1ba6b7"
+EXPECTED_MODULE_GIT_BLOB = "9d0a95de0e6bad373346e4af586a724785144236"
 
 WRAPPER = """
 # LUK_TERMINAL_V2_MAIN_MAINTENANCE
@@ -54,7 +54,10 @@ def _tools():
                 "file": {"type": "string", "enum": sorted(_luk_v2_files)},
                 "expected_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
                 "old_text": {"type": "string", "minLength": 1, "maxLength": 6000},
-                "new_text": {"type": "string", "maxLength": 6000}
+                "new_text": {"type": "string", "maxLength": 6000},
+                "source": {"type": "string", "enum": ["main_live", "campaign_staging", "dev_staging"]},
+                "start_line": {"type": "integer", "minimum": 1},
+                "line_count": {"type": "integer", "minimum": 1, "maximum": 100}
             },
             "required": ["action"],
             "additionalProperties": False
