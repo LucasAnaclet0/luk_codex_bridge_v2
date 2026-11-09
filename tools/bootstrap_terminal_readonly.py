@@ -172,9 +172,9 @@ def main():
 
     applied = False
     try:
+        applied = True
         replace_bytes(MODULE, module_bytes)
         replace_bytes(MCP, candidate.encode("utf-8"), mode=0o644)
-        applied = True
         # Verify register/reject behavior without running the server or making
         # any subprocess diagnostic call.
         verify_code = (
@@ -197,28 +197,28 @@ def main():
         restart = run(["sudo", "-n", "systemctl", "restart", SERVICE])
         if restart.returncode:
             fail("MCP restart failed")
-        time.sleep(2)
-        active = run(["systemctl", "is-active", SERVICE])
-        if active.returncode or active.stdout.strip() != "active":
-            fail("MCP not active after restart")
-
         # A 401 without auth is expected when the authenticated MCP endpoint responds.
         # Never read or print the secret.
-        port = 8765
-        try:
-            from config import MCP_PORT as configured_port
-            port = configured_port
-        except Exception:
-            pass
-        probe = urllib.request.Request("http://127.0.0.1:%d/mcp" % port)
-        try:
-            urllib.request.urlopen(probe, timeout=3).close()
-            fail("unexpected unauthenticated MCP response")
-        except urllib.error.HTTPError as error:
-            if error.code != 401:
-                fail("MCP authentication heartbeat did not return 401")
-        except Exception:
-            fail("MCP authentication heartbeat unavailable")
+        if str(BRIDGE) not in sys.path:
+            sys.path.insert(0, str(BRIDGE))
+        from config import MCP_PORT
+        authenticated_gate_ready = False
+        for attempt in range(8):
+            active = run(["systemctl", "is-active", SERVICE])
+            if active.returncode == 0 and active.stdout.strip() == "active":
+                probe = urllib.request.Request("http://127.0.0.1:%d/mcp" % MCP_PORT)
+                try:
+                    urllib.request.urlopen(probe, timeout=2).close()
+                    fail("unexpected unauthenticated MCP success")
+                except urllib.error.HTTPError as error:
+                    if error.code == 401:
+                        authenticated_gate_ready = True
+                        break
+                except (OSError, TimeoutError):
+                    pass
+            time.sleep(1)
+        if not authenticated_gate_ready:
+            fail("MCP authentication heartbeat failed after restart")
         print("MCP_RESTART_AND_AUTH_HEARTBEAT_OK")
         print("INSTALLED_READONLY_TOOL=true")
         print("NEW_TOOL=vps_diagnostics_readonly")
