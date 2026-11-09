@@ -11,6 +11,8 @@ The new `vps_main_maintenance_v2` tool supports:
 - `positions`: allowlisted fields only; does not return .env or exchange keys.
 - `errors` / `activity`: recent bounded log samples and counters.
 - `dev_status`: source-file hashes for a fixed list of Python files.
+- `campaign_100_status`: inspect the isolated 100-trade campaign staging directory and count persisted trades without writing.
+- `source_read`: bounded (up to 100 lines) reading of selected `.py` files from the MAIN, campaign staging or DEV staging. This is independent of the earlier staging-read adapter that returned `{}`.
 - `dev_stage_replace`: exact-hash, exact-one-occurrence text edits to isolated
   DEV staging files only; syntax parsing is required before saving.
 - `dev_validate`: syntax-only check; NOT a trading regression test.
@@ -56,3 +58,11 @@ MCP service; do not erase backups.
 
 `python3 -m unittest discover -s tests -p test_luk_main_maintenance_v2.py -v`
 plus offline AST checks of the bootstrap. No exchange credentials used.
+
+## Protected /proc/1 namespace
+
+On this VPS, user `ubuntu` received `PermissionError` opening `/proc/1/ns/pid`. The updated installer treats this as `PID_NAMESPACE_EQUIVALENCE=UNKNOWN_PERMISSION_DENIED`, never as a verified match. It still checks the expected MCP systemd unit, keeps `host_attested=false` and refuses MAIN mutations. A **readable mismatch** remains a hard failure.
+
+## Campaign integration (read-only)
+
+Fixed staging: `/home/ubuntu/luk_campaigns/campanha_100_20261108_230704_124781/runtime_staging`. Prior observation: 20 Python files and a zero-trade new campaign (not yet activated). The old MAIN retained 7 positions in local records and an unresolved historical HYPE order. The new tool does not delete, reclassify, reconcile or trade on these records. Zero Demo exchange exposure and isolation must be rechecked before any activation.
