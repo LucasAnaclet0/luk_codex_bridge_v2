@@ -18,6 +18,16 @@ class MaintenanceV2Tests(unittest.TestCase):
         self.bot.mkdir()
         self.stage = base / "stage"
         self.bot.joinpath("logs").mkdir()
+        self.campaign = base / "campaign"
+        self.campaign.mkdir()
+        self.campaign_stage = self.campaign / "runtime_staging"
+        self.campaign_stage.mkdir()
+        self.c1 = patch.object(m, "CAMPAIGN", self.campaign)
+        self.c2 = patch.object(m, "CAMPAIGN_STAGE", self.campaign_stage)
+        self.c1.start()
+        self.c2.start()
+        self.addCleanup(self.c1.stop)
+        self.addCleanup(self.c2.stop)
         self.p1 = patch.object(m, "BOT", self.bot)
         self.p2 = patch.object(m, "STAGE", self.stage)
         self.p3 = patch.object(m, "LOCK", self.bot / ".demo_bot.lock")
@@ -60,6 +70,46 @@ class MaintenanceV2Tests(unittest.TestCase):
         self.assertEqual(result["result"]["log"]["reconciliation_error_in_tail"], 1)
         self.assertEqual(result["result"]["log"]["low_balance_in_tail"], 1)
         self.assertGreater(result["result"]["log"]["scan_completed_in_tail"], 0)
+
+    def test_campaign_status_is_observational(self):
+        (self.campaign_stage / "main.py").write_text("pass\n")
+        (self.campaign_stage / "historico_operacoes.json").write_text("[]")
+        (self.campaign_stage / "posicoes_abertas.json").write_text('{"positions": {}}')
+        got = m.run("campaign_100_status")
+        self.assertEqual(got["result"]["target_closed_trades"], 100)
+        self.assertEqual(got["result"]["closed_trades_observed"], 0)
+        self.assertEqual(got["result"]["python_file_count"], 1)
+        self.assertFalse(got["result"]["ready_to_activate"])
+        self.assertFalse(got["go_for_main_mutations"])
+
+    def test_source_read_bounded_and_allowlisted(self):
+        (self.campaign_stage / "main.py").write_text("first\nsecond\nthird\n")
+        got = m.run("source_read", {"action": "source_read", "file": "main.py",
+                                   "source": "campaign_staging", "start_line": 2,
+                                   "line_count": 1})
+        self.assertEqual(got["result"]["excerpt"], "second")
+        for bad in (
+            {"action": "source_read", "file": ".env",
+             "source": "campaign_staging", "start_line": 1, "line_count": 1},
+            {"action": "source_read", "file": "main.py",
+             "source": "campaign_staging", "start_line": 1, "line_count": 101},
+        ):
+            with self.assertRaises(ValueError):
+                m.run("source_read", bad)
+
+    def test_bootstrap_does_not_falsely_attest_when_proc_restricted(self):
+        from tools import bootstrap_luk_terminal_v2 as bootstrap
+        with patch.object(bootstrap.os, "readlink", side_effect=PermissionError):
+            with patch.object(bootstrap.Path, "read_text", side_effect=PermissionError):
+                bootstrap.check_proc_context()
+
+    def test_bootstrap_rejects_mismatched_namespaces(self):
+        from tools import bootstrap_luk_terminal_v2 as bootstrap
+        def ns_read(path):
+            return "pid:[4026531836]" if path == "/proc/self/ns/pid" else "pid:[123]"
+        with patch.object(bootstrap.os, "readlink", side_effect=ns_read):
+            with self.assertRaises(RuntimeError):
+                bootstrap.check_proc_context()
 
     def test_stage_replace_validates_syntax_without_touching_main(self):
         code = b"def f():\n    return 1\n"
