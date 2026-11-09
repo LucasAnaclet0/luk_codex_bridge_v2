@@ -15,6 +15,7 @@ from config import (
     RESULT_PAGE_CHARS,
 )
 from database import create_task, get_task, initialize
+from terminal_readonly import PROBES, run_diagnostic
 
 
 PROTOCOL_VERSION = "2025-11-25"
@@ -36,6 +37,21 @@ def _rpc_error(request_id, code, message, data=None):
 
 def _tools():
     return [
+        {
+            "name": "vps_diagnostics_readonly",
+            "description": (
+                "Fixed read-only diagnostic probes in the current, unverified "
+                "process namespace. Does NOT attest VPS host identity, permit "
+                "mutations or execute caller-supplied shell commands."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"operation": {"type": "string", "enum": sorted(PROBES)}},
+                "required": ["operation"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
         {
             "name": "submit_codex_task",
             "description": (
@@ -73,7 +89,11 @@ def _tools():
 def _tool_payload(name, arguments):
     if not isinstance(arguments, dict):
         raise ValueError("invalid tool arguments")
-    if name == "submit_codex_task":
+    if name == "vps_diagnostics_readonly":
+        if set(arguments) != {"operation"}:
+            raise ValueError("invalid tool arguments")
+        payload = run_diagnostic(arguments["operation"])
+    elif name == "submit_codex_task":
         if set(arguments) != {"task"}:
             raise ValueError("invalid tool arguments")
         task_id = create_task(DB_PATH, arguments.get("task"))
