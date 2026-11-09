@@ -43,3 +43,4 @@ jobs:
           print('BOOTSTRAP_AST_CANARY_OK')
           PY
           python -m unittest discover -s tests -p test_luk_main_maintenance_v2.py -v
+          sha256sum tools/bootstrap_luk_terminal_v2.py luk_main_maintenance_v2.py
