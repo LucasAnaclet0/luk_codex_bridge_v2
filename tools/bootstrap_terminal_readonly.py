@@ -58,6 +58,8 @@ def _tool_payload(name, arguments):
         return _luk_original_tool_payload(name, arguments)
     if not isinstance(arguments, dict) or set(arguments) != {"operation"}:
         raise ValueError("invalid tool arguments")
+    if type(arguments["operation"]) is not str or arguments["operation"] not in _luk_terminal_probes:
+        raise ValueError("invalid diagnostic operation")
     payload = _luk_terminal_run_diagnostic(arguments["operation"])
     return {
         "content": [{"type": "text", "text": _luk_terminal_json.dumps(payload, ensure_ascii=False)}],
