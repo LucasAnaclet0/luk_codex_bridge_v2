@@ -31,7 +31,7 @@ if __name__ == "__main__":
 class BootstrapOfflineTests(unittest.TestCase):
     def test_bundled_module_hash_matches_pinned_git_blob(self):
         data = module.MODULE_SOURCE.encode("utf-8")
-        computed = hashlib.sha1(("blob %d\\0" % len(data)).encode() + data).hexdigest()
+        computed = hashlib.sha1(("blob %d\0" % len(data)).encode() + data).hexdigest()
         self.assertEqual(computed, module.EXPECTED_MODULE_GIT_SHA1)
 
     def test_valid_layout_is_additive(self):
@@ -48,7 +48,7 @@ class BootstrapOfflineTests(unittest.TestCase):
             module.patched_source(source)
 
     def test_unknown_layout_denied(self):
-        for source in ("x = 1\\n", STUB.replace("class Handler:", "class Unknown:"),
+        for source in ("x = 1\n", STUB.replace("class Handler:", "class Unknown:"),
                        STUB.replace('if __name__ == "__main__":', 'if False:')):
             with self.subTest(source=source[:40]):
                 with self.assertRaises(RuntimeError):
