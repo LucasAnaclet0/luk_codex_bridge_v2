@@ -122,6 +122,29 @@ def patch_main_source(source):
     compile(result, str(MCP), "exec")
     return result.encode("utf-8")
 
+def check_proc_context():
+    """Use PID 1 comparison when readable; never infer host attestation."""
+    try:
+        self_ns = os.readlink("/proc/self/ns/pid")
+        init_ns = os.readlink("/proc/1/ns/pid")
+    except PermissionError:
+        # Some Ubuntu security profiles restrict /proc/1/ns to non-root users.
+        # No namespace proof means UNKNOWN, not a false match or a privilege bypass.
+        print("PID_NAMESPACE_EQUIVALENCE=UNKNOWN_PERMISSION_DENIED", flush=True)
+    else:
+        if self_ns != init_ns:
+            fail("PID namespace differs from PID 1; refusing installation")
+        print("PID_NAMESPACE_EQUIVALENCE=OBSERVED", flush=True)
+    try:
+        comm = Path("/proc/1/comm").read_text().strip()
+    except PermissionError:
+        print("PID1_COMM=UNKNOWN_PERMISSION_DENIED", flush=True)
+    else:
+        if comm != "systemd":
+            fail("unexpected PID 1 process")
+        print("PID1_COMM=systemd", flush=True)
+    print("HOST_ATTESTED=false", flush=True)
+
 def check_service():
     status = cmd(["systemctl", "show", SERVICE,
                   "-p", "LoadState", "-p", "ActiveState", "-p", "User",
@@ -168,10 +191,7 @@ def main():
         fail("V2 marker already installed")
     if "vps_diagnostics_readonly" not in text:
         fail("required V1 read-only feature missing; no changes")
-    if os.readlink("/proc/self/ns/pid") != os.readlink("/proc/1/ns/pid"):
-        fail("unexpected PID namespace; refusing installation")
-    if Path("/proc/1/comm").read_text().strip() != "systemd":
-        fail("unexpected PID 1")
+    check_proc_context()
     check_service()
     req = urllib.request.Request(PINNED_MODULE_URL, headers={"User-Agent": "luk-v2-bootstrap"})
     with urllib.request.urlopen(req, timeout=10) as res:
