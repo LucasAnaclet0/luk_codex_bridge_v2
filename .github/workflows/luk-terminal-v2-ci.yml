@@ -1,0 +1,46 @@
+name: LUK Terminal V2 offline safety checks
+
+on:
+  push:
+    branches:
+      - dev/luk-terminal-v2-20261109
+  pull_request:
+    paths:
+      - "luk_main_maintenance_v2.py"
+      - "tools/bootstrap_luk_terminal_v2.py"
+      - "tests/test_luk_main_maintenance_v2.py"
+      - ".github/workflows/luk-terminal-v2-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Syntax and offline tests (no exchange, no credentials)
+        run: |
+          python - <<'PY'
+          import ast
+          for name in ('luk_main_maintenance_v2.py',
+                       'tools/bootstrap_luk_terminal_v2.py',
+                       'tests/test_luk_main_maintenance_v2.py'):
+              ast.parse(open(name, encoding='utf-8').read(), filename=name)
+          from tools.bootstrap_luk_terminal_v2 import patch_main_source, MARKER
+          mock = ('def _tools():\n return []\n'
+                  'def _tool_payload(name, arguments):\n return {}\n'
+                  'class Handler: pass\n'
+                  'def main(): pass\n'
+                  'if __name__ == "__main__":\n main()\n')
+          result = patch_main_source(mock).decode()
+          assert MARKER in result
+          ast.parse(result)
+          print('BOOTSTRAP_AST_CANARY_OK')
+          PY
+          python -m unittest discover -s tests -p test_luk_main_maintenance_v2.py -v
+          sha256sum tools/bootstrap_luk_terminal_v2.py luk_main_maintenance_v2.py
