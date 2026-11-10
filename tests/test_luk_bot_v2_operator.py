@@ -168,6 +168,29 @@ class V2OperatorOfflineTests(unittest.TestCase):
         self.assertEqual(records[0]["row_counts"]["trades"], 1)
         self.assertEqual(records[0]["status"], "OBSERVED")
 
+    def test_readonly_campaign_status_has_bounded_pending_and_positions(self):
+        data = self.bot / "data"
+        data.mkdir()
+        dbpath = data / "v2_okx_demo.sqlite3"
+        con = sqlite3.connect(dbpath)
+        con.execute("CREATE TABLE orders(status TEXT,side TEXT,symbol TEXT,created_at TEXT)")
+        con.execute("CREATE TABLE positions(symbol TEXT,cost REAL,entry REAL,stop REAL,take REAL)")
+        con.execute("CREATE TABLE closed_trades(symbol TEXT)")
+        con.execute("INSERT INTO orders VALUES ('PREPARED','buy','INJ/USDT','2026-11-10T15:20:00Z')")
+        con.execute("INSERT INTO orders VALUES ('FILLED','buy','SOL/USDT','2026-11-10T14:20:00Z')")
+        con.execute("INSERT INTO positions VALUES ('SOL/USDT',25.0,50.0,48.0,54.0)")
+        con.execute("INSERT INTO closed_trades VALUES ('BTC/USDT')")
+        con.commit()
+        con.close()
+        rows = mod._sqlite_summary()
+        result = next(x for x in rows if x["database"] == "data/v2_okx_demo.sqlite3")
+        self.assertEqual(result["campaign_closed_trades"], 1)
+        self.assertEqual(result["campaign_target_closed_trades"], 100)
+        self.assertEqual(result["unresolved_orders"][0]["symbol"], "INJ/USDT")
+        self.assertTrue(result["positions_summary"][0]["stop_take_valid"])
+        self.assertEqual(sum(x["count"] for x in result["orders_by_status"]), 2)
+        self.assertNotIn("cid", str(result))
+
     def test_unique_service_validation(self):
         expected = (
             "LoadState=loaded\nActiveState=active\nSubState=running\n"
