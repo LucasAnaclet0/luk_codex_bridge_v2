@@ -87,8 +87,8 @@ def _valid_v2_exec(raw: str) -> bool:
         "/home/ubuntu/luk_bot_trader_v2/venv/bin/python",
         "/home/ubuntu/luk_bot_trader/venv/bin/python",
     }
-    match_path = re.search(r"(?:^|[\\s{;])path=([^\\s;}]+)", raw)
-    match_argv = re.search(r"argv\\[\\]=\\{?\\s*([^;}]+)", raw)
+    match_path = re.search(r"(?:^|[\s{;])path=([^\s;}]+)", raw)
+    match_argv = re.search(r"argv\[\]=\{?\s*([^;}]+)", raw)
     if not match_path or not match_argv:
         return False
     binary = match_path.group(1)
@@ -167,7 +167,7 @@ def _proc_info(pid: int) -> dict | None:
         cwd = Path(os.readlink(p / "cwd"))
         if cwd != ROOT and ROOT not in cwd.parents:
             return None
-        cmd = (p / "cmdline").read_bytes().split(b"\\x00")
+        cmd = (p / "cmdline").read_bytes().split(b"\x00")
         if not cmd or not any(b"python" in part or part.endswith(b"/main.py")
                               for part in cmd[:3]):
             return None
@@ -203,7 +203,7 @@ def _safe_path(base: Path, name: str, *, discovery_read=False) -> Path:
     # Discovery is read-only in trusted V2 source packages, not backup or .env.
     discovered = bool(
         discovery_read and isinstance(name, str) and
-        re.fullmatch(r"(?:(?:src|v2|core)/)?[A-Za-z_][A-Za-z0-9_-]{0,62}\\.py", name)
+        re.fullmatch(r"(?:(?:src|v2|core)/)?[A-Za-z_][A-Za-z0-9_-]{0,62}\.py", name)
     )
     if type(name) is not str or (name not in SAFE_FILES and not discovered):
         raise ValueError("Python file not allowlisted")
