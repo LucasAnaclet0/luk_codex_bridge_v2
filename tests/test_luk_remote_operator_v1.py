@@ -25,7 +25,7 @@ class OperatorOfflineTests(unittest.TestCase):
         self.state.mkdir()
         self.backups.mkdir()
         self.python = self.bot / "venv/bin/python"
-        self.python.parent.mkdir()
+        self.python.parent.mkdir(parents=True)
         self.python.write_text("# fake interpreter")
         names = {"BOT": self.bot, "DEV": self.dev, "STATE": self.state,
                  "BACKUPS": self.backups, "CONTROL": self.state / "control.lock",
