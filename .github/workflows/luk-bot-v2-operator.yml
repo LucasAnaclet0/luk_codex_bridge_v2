@@ -1,0 +1,32 @@
+name: LUK Bot Trader V2 bridge integration offline checks
+on:
+  push:
+    branches: [dev/luk-bot-v2-remote-ops-20261110]
+  pull_request:
+    paths:
+      - "luk_bot_v2_operator.py"
+      - "tools/bootstrap_luk_bot_v2.py"
+      - "tests/test_luk_bot_v2_operator.py"
+      - ".github/workflows/luk-bot-v2-operator.yml"
+permissions:
+  contents: read
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Syntax and isolated safety tests (no VPS, no exchange)
+        run: |
+          python - <<'PY'
+          import ast
+          for path in ('luk_bot_v2_operator.py', 'tools/bootstrap_luk_bot_v2.py',
+                       'tests/test_luk_bot_v2_operator.py'):
+              ast.parse(open(path, encoding='utf-8').read(), filename=path)
+          print("BOT_V2_AST_OK")
+          PY
+          python -m unittest discover -s tests -p 'test_luk_bot_v2_operator.py' -v
+          sha256sum tools/bootstrap_luk_bot_v2.py luk_bot_v2_operator.py
