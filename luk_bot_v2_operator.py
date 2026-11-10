@@ -137,8 +137,9 @@ def _processes() -> list[dict]:
     return sorted(procs, key=lambda d: d["pid"])
 
 
-def _safe_path(base: Path, name: str) -> Path:
-    if type(name) is not str or name not in SAFE_FILES:
+def _safe_path(base: Path, name: str, *, discovery_read=False) -> Path:
+    if type(name) is not str or (name not in SAFE_FILES and not (
+            discovery_read and re.fullmatch(r"(?:src/)?[A-Za-z0-9_][A-Za-z0-9_-]{0,63}\\.py", name))):
         raise ValueError("Python file not allowlisted")
     if base.is_symlink():
         raise RuntimeError("base path is symlink")
@@ -462,7 +463,7 @@ def run(args: dict) -> dict:
             start, count = args["start_line"], args["line_count"]
             if type(start) is not int or type(count) is not int or start < 1 or count < 1 or count > 100:
                 raise ValueError("source excerpt bounds invalid")
-            content = _read(_safe_path(ROOT, args["file"]))
+            content = _read(_safe_path(ROOT, args["file"], discovery_read=True))
             lines = content.decode("utf-8").splitlines()
             if start > len(lines):
                 raise ValueError("past end")
