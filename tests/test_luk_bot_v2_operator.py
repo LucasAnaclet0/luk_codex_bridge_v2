@@ -180,9 +180,8 @@ class V2OperatorOfflineTests(unittest.TestCase):
         server = (
             "# LUK_CONTROLLED_OPERATOR_V1\n"
             "def _tools():\n"
-            "    return [\n"
-            "        {\'name\': \'base_tool\'},\n"
-            "    ]\n"
+            "    items = [{'name': 'base_tool'}]\n"
+            "    return items\n"
             "def _tool_payload(name, arguments):\n"
             "    return None\n"
             "class Handler: pass\n"
