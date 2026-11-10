@@ -312,6 +312,46 @@ def _sqlite_summary() -> list[dict]:
                         row = conn.execute('SELECT COUNT(*) FROM "' + table + '"').fetchone()
                         counts[table] = row[0]
                 obj["row_counts"] = counts
+                if obj["database"] == "data/v2_okx_demo.sqlite3" and {
+                        "orders", "positions", "closed_trades"}.issubset(tables):
+                    # Fixed readonly queries. Never return client/exchange order IDs.
+                    grouped = conn.execute(
+                        "SELECT status,side,count(*) FROM orders GROUP BY status,side"
+                    ).fetchall()
+                    obj["orders_by_status"] = [
+                        {"status": str(status)[:24], "side": str(side)[:8],
+                         "count": int(n)}
+                        for status, side, n in grouped[:24]
+                    ]
+                    q = conn.execute(
+                        "SELECT symbol,side,status,created_at FROM orders "
+                        "WHERE status IN ('PREPARED','UNKNOWN','OPEN') "
+                        "ORDER BY created_at LIMIT 10"
+                    ).fetchall()
+                    obj["unresolved_orders"] = [
+                        {"symbol": str(sym)[:30], "side": str(side)[:8],
+                         "status": str(status)[:24], "created_at": str(at)[:32]}
+                        for sym, side, status, at in q
+                    ]
+                    obj["unresolved_orders_truncated"] = (
+                        conn.execute(
+                            "SELECT count(*) FROM orders WHERE status IN "
+                            "('PREPARED','UNKNOWN','OPEN')"
+                        ).fetchone()[0] > 10
+                    )
+                    p = conn.execute(
+                        "SELECT symbol,cost,entry,stop,take FROM positions "
+                        "ORDER BY symbol LIMIT 11"
+                    ).fetchall()
+                    obj["positions_summary"] = [
+                        {"symbol": str(sym)[:30], "cost_usdt": round(float(cost), 4),
+                         "stop_take_valid": bool(0 < float(stop) < float(entry)
+                                                 < float(take))}
+                        for sym, cost, entry, stop, take in p[:10]
+                    ]
+                    obj["positions_truncated"] = len(p) > 10
+                    obj["campaign_target_closed_trades"] = 100
+                    obj["campaign_closed_trades"] = counts.get("closed_trades", 0)
             except (OSError, sqlite3.Error, ValueError):
                 obj["status"] = "UNAVAILABLE"
             finally:
