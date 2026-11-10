@@ -24,7 +24,7 @@ class CombinedMCPV2Canary(unittest.TestCase):
         payload_defs = [x for x in tree.body if isinstance(x, ast.FunctionDef) and x.name == "_tool_payload"]
         self.assertEqual(len(tools_defs), 2, "V2 must not add a third wrapper")
         self.assertEqual(len(payload_defs), 2, "V2 must not add a third dispatcher wrapper")
-        self.assertEqual(candidate.count("_luk_v2_tool_spec(),"), 1)
+        self.assertEqual(candidate.count("_luk_v2_add_tool("), 2)
         self.assertEqual(candidate.count("return _luk_v2_dispatch(arguments)"), 1)
         self.assertEqual(candidate.count("LUK_BOT_TRADER_V2_PLUGIN"), 1)
         with tempfile.TemporaryDirectory() as tmp:
