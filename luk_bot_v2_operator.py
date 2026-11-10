@@ -20,6 +20,7 @@ import tempfile
 
 ROOT = Path("/home/ubuntu/luk_bot_trader_v2")
 UNIT = "luk-bot-trader-v2.service"
+UNIT_NAME_PATTERN = re.compile(r"luk-[a-z0-9-]*v2[a-z0-9-]*\\.service")
 BRIDGE = Path("/home/ubuntu/luk_codex_bridge_v2")
 DEV = BRIDGE / ".luk-bot-v2-dev-staging"
 OPS = BRIDGE / ".luk-bot-v2-operator"
@@ -59,20 +60,49 @@ def _cmd(argv, timeout=8) -> subprocess.CompletedProcess:
                           env={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C"})
 
 
+def _candidate_units() -> list[str]:
+    names = {UNIT}
+    for command in (["/usr/bin/systemctl", "list-unit-files", "--type=service", "--no-legend", "--no-pager"],
+                    ["/usr/bin/systemctl", "list-units", "--all", "--type=service", "--no-legend", "--no-pager"]):
+        try:
+            result = _cmd(command)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode:
+            continue
+        for line in result.stdout.splitlines():
+            name = line.strip().split(maxsplit=1)[0] if line.strip() else ""
+            if UNIT_NAME_PATTERN.fullmatch(name):
+                names.add(name)
+    return sorted(names)[:25]
+
+
 def _service() -> dict:
     fields = [arg for prop in ALLOWED_SERVICE_FIELDS for arg in ("-p", prop)]
-    try:
-        cp = _cmd(["/usr/bin/systemctl", "show", "--no-pager", UNIT, *fields])
-    except (OSError, subprocess.TimeoutExpired):
-        return {"status": "UNAVAILABLE"}
-    if cp.returncode:
-        return {"status": "UNAVAILABLE"}
-    data = {}
-    for line in cp.stdout.splitlines():
-        k, sep, v = line.partition("=")
-        if sep and k in ALLOWED_SERVICE_FIELDS:
-            data[k] = v[:1024]
-    return {"status": "OBSERVED", **data}
+    verified = []
+    for unit in _candidate_units():
+        try:
+            cp = _cmd(["/usr/bin/systemctl", "show", "--no-pager", unit, *fields])
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if cp.returncode:
+            continue
+        data = {}
+        for line in cp.stdout.splitlines():
+            k, sep, v = line.partition("=")
+            if sep and k in ALLOWED_SERVICE_FIELDS:
+                data[k] = v[:1024]
+        if (data.get("LoadState") == "loaded" and
+                data.get("User") == "ubuntu" and
+                data.get("WorkingDirectory") == str(ROOT) and
+                str(ROOT) in data.get("ExecStart", "")):
+            verified.append({"status": "OBSERVED", "Unit": unit, **data})
+    if len(verified) == 1:
+        return verified[0]
+    if len(verified) > 1:
+        return {"status": "AMBIGUOUS_V2_UNITS", "candidate_count": len(verified)}
+    return {"status": "UNVERIFIED_V2_SERVICE", "candidate_names": _candidate_units()}
+
 
 
 def _proc_info(pid: int) -> dict | None:
@@ -190,9 +220,12 @@ def _sqlite_summary() -> list[dict]:
 
 
 def _log_summary() -> dict:
+    service = _service()
+    if service.get("status") != "OBSERVED":
+        return {"status": "V2_SERVICE_UNVERIFIED"}
     try:
         cp = _cmd(["/usr/bin/journalctl", "--no-pager", "--output=cat",
-                   "-u", UNIT, "-n", "120"], timeout=8)
+                   "-u", service["Unit"], "-n", "120"], timeout=8)
     except (OSError, subprocess.TimeoutExpired):
         return {"status": "UNAVAILABLE"}
     if cp.returncode:
@@ -209,10 +242,18 @@ def _log_summary() -> dict:
             "marker_counts": labels, "marked_lines_count": len(marked)}
 
 
+def _public_service_status(service: dict) -> dict:
+    public = dict(service)
+    # Command lines can include sensitive flags: provide identity evidence only.
+    raw = public.pop("ExecStart", None)
+    public["exec_start_contains_v2_path"] = str(ROOT) in (raw or "")
+    return public
+
+
 def _status() -> dict:
     return {
         "root_exists": ROOT.is_dir() and not ROOT.is_symlink(),
-        "service": _service(),
+        "service": _public_service_status(_service()),
         "observed_processes": _processes(),
         "source_files": _inventory(),
         "database_observations": _sqlite_summary(),
@@ -316,7 +357,7 @@ def _stop(args: dict) -> dict:
         raise RuntimeError("NO_GO: V2 service/process identity changed")
     # The service manager, not arbitrary signals or shell, controls the process.
     try:
-        result = _cmd(["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "stop", UNIT], timeout=15)
+        result = _cmd(["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "stop", service["Unit"]], timeout=15)
     except (OSError, subprocess.TimeoutExpired):
         raise RuntimeError("NO_GO: systemd stop failed") from None
     if result.returncode:
@@ -326,11 +367,11 @@ def _stop(args: dict) -> dict:
 
 
 def _start() -> dict:
-    _ensure_stopped()
+    verified_service = _ensure_stopped()
     if not _demo_policy_proof():
         raise RuntimeError("NO_GO: V2 explicit OKX DEMO proof missing")
     try:
-        result = _cmd(["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", UNIT], timeout=15)
+        result = _cmd(["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", verified_service["Unit"]], timeout=15)
     except (OSError, subprocess.TimeoutExpired):
         raise RuntimeError("NO_GO: systemd start failed") from None
     if result.returncode:
