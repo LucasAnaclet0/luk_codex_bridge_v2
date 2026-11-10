@@ -133,7 +133,7 @@ class V2OperatorOfflineTests(unittest.TestCase):
             "LoadState=loaded\nActiveState=active\nSubState=running\n"
             "MainPID=444\nUser=ubuntu\n"
             f"WorkingDirectory={self.bot}\n"
-            f"ExecStart={{ path={self.bot}/venv/bin/python ; argv[]={{...}} }}\n"
+            "ExecStart={ path=/home/ubuntu/luk_bot_trader/venv/bin/python ; argv[]=/home/ubuntu/luk_bot_trader/venv/bin/python -m v2.demo --daemon ; ignore_errors=no }\n"
             "FragmentPath=/etc/systemd/system/luk-bot-trader-v2.service\n"
         )
         def call(argv, timeout=8):
@@ -147,7 +147,7 @@ class V2OperatorOfflineTests(unittest.TestCase):
             self.assertEqual(found["Unit"], "luk-bot-trader-v2.service")
             redacted = mod._public_service_status(found)
             self.assertNotIn("ExecStart", redacted)
-            self.assertTrue(redacted["exec_start_contains_v2_path"])
+            self.assertTrue(redacted["exec_start_v2_module_verified"])
 
     def test_reject_incorrect_service_target(self):
         expected = (
@@ -175,6 +175,65 @@ class V2OperatorOfflineTests(unittest.TestCase):
                              "confirmation": mod.CONFIRM["service_stop"],
                              "expected_pid": 777, "expected_ticks": 78})
                 command.assert_not_called()
+
+    def test_inventory_discovers_v2_package_and_no_readonly_writes(self):
+        package = self.bot / "v2"
+        package.mkdir()
+        (package / "demo.py").write_text("def main():\n    return 1\n")
+        result = mod.run({"action": "file_inventory"})["result"]
+        self.assertIn("v2/demo.py", [x["file"] for x in result["files"]])
+        self.assertFalse(self.ops.exists(), "read-only inventory must not create ops")
+        source = mod.run({"action":"source_read", "file":"v2/demo.py",
+                          "start_line":1, "line_count":2})["result"]
+        self.assertIn("return 1", source["excerpt"])
+        self.assertFalse(self.ops.exists(), "read-only source must not create ops")
+
+    def test_source_read_redacts_credential_lines(self):
+        (self.bot / "core").mkdir()
+        (self.bot / "core" / "engine.py").write_text(
+            "API_KEY = \"should_not_be_shown\"\ndef f():\n    return 7\n")
+        r = mod.run({"action":"source_read", "file":"core/engine.py",
+                     "start_line":1, "line_count":3})
+        self.assertNotIn("should_not_be_shown", r["result"]["excerpt"])
+        self.assertIn("[REDACTED", r["result"]["excerpt"])
+
+    def test_v2_demo_module_exec_attestation(self):
+        raw = ("{ path=/home/ubuntu/luk_bot_trader/venv/bin/python ; "
+               "argv[]=/home/ubuntu/luk_bot_trader/venv/bin/python "
+               "-m v2.demo --daemon ; ignore_errors=no }")
+        self.assertTrue(mod._valid_v2_exec(raw))
+        self.assertFalse(mod._valid_v2_exec(raw.replace("v2.demo","v2.telegram_menu")))
+        self.assertFalse(mod._valid_v2_exec(raw.replace("--daemon","--live")))
+        self.assertFalse(mod._valid_v2_exec(raw.replace("luk_bot_trader/venv",
+                                                    "evil/venv")))
+
+    def test_service_restart_exact_confirmation_and_process_identity(self):
+        svc = {"status":"OBSERVED", "Unit":mod.UNIT, "ActiveState":"active",
+               "MainPID":"777"}
+        ps = [{"pid":777, "start_ticks":999, "role":"trade_demo"},
+              {"pid":778, "start_ticks":1000, "role":"telegram_menu"}]
+        args = {"action":"service_restart", "expected_pid":777,
+                "expected_ticks":999, "confirmation":"NO"}
+        with self.assertRaises(PermissionError):
+            mod.run(args)
+        args["confirmation"] = mod.CONFIRM["service_restart"]
+        with patch.object(mod,"_service_identity",return_value=(svc, ps)), \
+             patch.object(mod,"_demo_policy_proof",return_value=False), \
+             patch.object(mod,"_cmd") as cmd:
+            with self.assertRaisesRegex(RuntimeError,"DEMO proof missing"):
+                mod.run(args)
+            cmd.assert_not_called()
+        with patch.object(mod,"_service_identity",return_value=(svc, ps)), \
+             patch.object(mod,"_demo_policy_proof",return_value=True), \
+             patch.object(mod,"_cmd",return_value=subprocess.CompletedProcess([],0,"","")) as cmd, \
+             patch.object(mod,"_service",return_value={
+                 "status":"OBSERVED","ActiveState":"active","MainPID":"888"}):
+            answer = mod.run(args)
+            self.assertEqual(answer["result"]["status"],
+                             "V2_RESTARTED_DEMO_RUNNING_NOT_RECONCILED")
+            cmd.assert_called_once_with(["/usr/bin/sudo", "-n",
+                                         "/usr/bin/systemctl", "restart", mod.UNIT],
+                                        timeout=15)
 
     def test_canary_patch_of_existing_mcp_registration(self):
         server = (
