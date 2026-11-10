@@ -179,8 +179,12 @@ class V2OperatorOfflineTests(unittest.TestCase):
     def test_canary_patch_of_existing_mcp_registration(self):
         server = (
             "# LUK_CONTROLLED_OPERATOR_V1\n"
-            "def _tools(): return []\n"
-            "def _tool_payload(name, arguments): return None\n"
+            "def _tools():\n"
+            "    return [\n"
+            "        {\'name\': \'base_tool\'},\n"
+            "    ]\n"
+            "def _tool_payload(name, arguments):\n"
+            "    return None\n"
             "class Handler: pass\n"
             "def main(): pass\n"
             'if __name__ == "__main__":\n    main()\n'
