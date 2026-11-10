@@ -28,19 +28,15 @@ URL = ("https://raw.githubusercontent.com/LucasAnaclet0/luk_codex_bridge_v2/"
        "44beb8a6cd70c94219f9660f173c867bdb2c0132/luk_bot_v2_operator.py")
 EXPECTED_BLOB = "8f9f0ed6f8e768be3aeecb730e472e39314b255d"
 
-WRAPPER = """
+HELPERS = """
 # LUK_BOT_TRADER_V2_PLUGIN
 import json as _luk_v2_json
 from luk_bot_v2_operator import ACTIONS as _luk_v2_actions
 from luk_bot_v2_operator import SAFE_FILES as _luk_v2_files
 from luk_bot_v2_operator import run as _luk_v2_run
 
-_luk_v2_prior_tools = _tools
-def _tools():
-    items = _luk_v2_prior_tools()
-    if any(item.get("name") == "vps_bot_trader_v2" for item in items):
-        raise RuntimeError("duplicate bot V2 tool")
-    return [*items, {
+def _luk_v2_tool_spec():
+    return {
         "name": "vps_bot_trader_v2",
         "description": (
             "Fixed-path LUK Bot Trader V2 observability and strictly approved "
@@ -68,12 +64,9 @@ def _tools():
             "additionalProperties": False
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": True}
-    }]
+    }
 
-_luk_v2_prior_payload = _tool_payload
-def _tool_payload(name, arguments):
-    if name != "vps_bot_trader_v2":
-        return _luk_v2_prior_payload(name, arguments)
+def _luk_v2_dispatch(arguments):
     if type(arguments) is not dict or arguments.get("action") not in _luk_v2_actions:
         raise ValueError("invalid V2 tool request")
     allowed = {"action", "file", "start_line", "line_count", "old_text", "new_text",
@@ -114,28 +107,49 @@ def blob_hash(data):
 
 
 def patch_mcp(source):
+    """Insert V2 in the oldest MCP handlers; do not add a recursive wrapper."""
     if MARKER in source:
         fail("operator already installed")
     if "# LUK_CONTROLLED_OPERATOR_V1" not in source:
         fail("existing controlled operator marker not found")
     tree = ast.parse(source)
-    defined = {x.name for x in tree.body if isinstance(x, ast.FunctionDef)}
-    classes = {x.name for x in tree.body if isinstance(x, ast.ClassDef)}
-    if not {"_tools", "_tool_payload", "main"} <= defined or "Handler" not in classes:
+    funcs = {name: [node for node in tree.body
+                    if isinstance(node, ast.FunctionDef) and node.name == name]
+             for name in ("_tools", "_tool_payload", "main")}
+    classes = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
+    if not all(funcs.values()) or "Handler" not in classes:
         fail("required MCP definitions missing")
-    guards = [x for x in tree.body if isinstance(x, ast.If)
-              and isinstance(x.test, ast.Compare)
-              and isinstance(x.test.left, ast.Name) and x.test.left.id == "__name__"
-              and len(x.test.comparators) == 1
-              and isinstance(x.test.comparators[0], ast.Constant)
-              and x.test.comparators[0].value == "__main__"]
+    guards = [node for node in tree.body if isinstance(node, ast.If)
+              and isinstance(node.test, ast.Compare)
+              and isinstance(node.test.left, ast.Name)
+              and node.test.left.id == "__name__"
+              and len(node.test.comparators) == 1
+              and isinstance(node.test.comparators[0], ast.Constant)
+              and node.test.comparators[0].value == "__main__"]
     if len(guards) != 1 or tree.body[-1] is not guards[0]:
         fail("MCP main guard shape unexpected")
+    base_tools = funcs["_tools"][0]
+    base_payload = funcs["_tool_payload"][0]
+    if (not base_tools.body or not isinstance(base_tools.body[0], ast.Return)
+            or not isinstance(base_tools.body[0].value, ast.List)
+            or not base_payload.body):
+        fail("original MCP function layout unrecognized")
     lines = source.splitlines(keepends=True)
-    lines.insert(guards[0].lineno - 1, WRAPPER + "\n")
-    result = "".join(lines)
-    compile(result, str(MCP), "exec")
-    return result.encode("utf-8")
+    return_line = base_tools.body[0].lineno
+    if "return [" not in lines[return_line - 1]:
+        fail("base tool registry layout changed")
+    insertions = [
+        (return_line, "        _luk_v2_tool_spec()," + chr(10)),
+        (base_payload.body[0].lineno - 1,
+         '    if name == "vps_bot_trader_v2":' + chr(10)
+         + '        return _luk_v2_dispatch(arguments)' + chr(10)),
+        (guards[0].lineno - 1, HELPERS + chr(10)),
+    ]
+    for position, code in sorted(insertions, key=lambda pair: pair[0], reverse=True):
+        lines.insert(position, code)
+    patched = "".join(lines)
+    compile(patched, str(MCP), "exec")
+    return patched.encode("utf-8")
 
 
 def verify_service():
