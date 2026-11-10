@@ -46,6 +46,8 @@ SAFE_FILES = frozenset((
     "src/main.py", "src/bot.py", "src/engine.py",
     "src/trading.py", "src/strategies.py", "src/risk_manager.py",
     "src/orders.py", "src/executor.py", "src/database.py",
+    "v2/demo.py", "v2/engine.py", "v2/portfolio.py", "v2/strategy.py",
+    "v2/universe.py", "v2/telegram_menu.py", "v2/telegram_notify.py",
 ))
 ALLOWED_SERVICE_FIELDS = ("LoadState", "ActiveState", "SubState", "MainPID",
                           "User", "WorkingDirectory", "ExecStart", "FragmentPath")
@@ -77,6 +79,28 @@ def _candidate_units() -> list[str]:
     return sorted(names)[:25]
 
 
+def _valid_v2_exec(raw: str) -> bool:
+    """Recognize ONLY fixed V2 Python module entrypoint; V1 venv is read-only dependency."""
+    if not isinstance(raw, str) or len(raw) > 1024:
+        return False
+    expected_interpreters = {
+        "/home/ubuntu/luk_bot_trader_v2/venv/bin/python",
+        "/home/ubuntu/luk_bot_trader/venv/bin/python",
+    }
+    match_path = re.search(r"(?:^|[\\s{;])path=([^\\s;}]+)", raw)
+    match_argv = re.search(r"argv\\[\\]=\\{?\\s*([^;}]+)", raw)
+    if not match_path or not match_argv:
+        return False
+    binary = match_path.group(1)
+    tokens = match_argv.group(1).strip().split()
+    if tokens and tokens[-1] == "}":
+        tokens.pop()
+    return (binary in expected_interpreters and bool(tokens) and
+            tokens[0] == binary and
+            tokens[1:] in (["-m", "v2.demo", "--daemon"],
+                           ["-u", "-m", "v2.demo", "--daemon"]))
+
+
 def _service_probe() -> dict:
     """Return only bounded identity predicates, never unit command lines/env."""
     facts = []
@@ -99,7 +123,7 @@ def _service_probe() -> dict:
             "load_state_loaded": data.get("LoadState") == "loaded",
             "user_ubuntu": data.get("User") == "ubuntu",
             "working_directory_v2": data.get("WorkingDirectory") == str(ROOT),
-            "exec_start_mentions_v2": str(ROOT) in data.get("ExecStart", ""),
+            "exec_start_v2_module_verified": _valid_v2_exec(data.get("ExecStart", "")),
             "unit_file_systemd": data.get("FragmentPath", "").startswith(
                 "/etc/systemd/system/"),
         }
@@ -130,8 +154,8 @@ def _service() -> dict:
     if (data.get("LoadState") == "loaded" and
             data.get("User") == "ubuntu" and
             data.get("WorkingDirectory") == str(ROOT) and
-            str(ROOT) in data.get("ExecStart", "") and
-            data.get("FragmentPath", "").startswith("/etc/systemd/system/")):
+            _valid_v2_exec(data.get("ExecStart", "")) and
+            data.get("FragmentPath", "") == "/etc/systemd/system/" + target):
         return {"status": "OBSERVED", "Unit": target, **data}
     return {"status": "UNVERIFIED_V2_SERVICE",
             "candidate_names": _candidate_units()}
@@ -143,14 +167,20 @@ def _proc_info(pid: int) -> dict | None:
         cwd = Path(os.readlink(p / "cwd"))
         if cwd != ROOT and ROOT not in cwd.parents:
             return None
-        cmd = (p / "cmdline").read_bytes().split(b"\x00")
-        if not cmd or not any(b"python" in part or part.endswith(b"/main.py") for part in cmd[:3]):
+        cmd = (p / "cmdline").read_bytes().split(b"\\x00")
+        if not cmd or not any(b"python" in part or part.endswith(b"/main.py")
+                              for part in cmd[:3]):
             return None
         raw = (p / "stat").read_text()
         ticks = int(raw.rsplit(")", 1)[1].strip().split()[19])
         if ticks <= 0:
             return None
-        return {"pid": pid, "start_ticks": ticks, "cwd": str(cwd)}
+        # Classify by module, never expose argv/credentials.
+        modules = {cmd[i + 1] for i, x in enumerate(cmd[:-1]) if x == b"-m"}
+        role = ("trade_demo" if b"v2.demo" in modules else
+                "telegram_menu" if b"v2.telegram_menu" in modules else
+                "unknown_python")
+        return {"pid": pid, "start_ticks": ticks, "cwd": str(cwd), "role": role}
     except (OSError, ValueError, IndexError):
         return None
 
@@ -170,11 +200,16 @@ def _processes() -> list[dict]:
 
 
 def _safe_path(base: Path, name: str, *, discovery_read=False) -> Path:
-    if type(name) is not str or (name not in SAFE_FILES and not (
-            discovery_read and re.fullmatch(r"(?:src/)?[A-Za-z0-9_][A-Za-z0-9_-]{0,63}\.py", name))):
+    # Discovery is read-only in trusted V2 source packages, not backup or .env.
+    discovered = bool(
+        discovery_read and isinstance(name, str) and
+        re.fullmatch(r"(?:(?:src|v2|core)/)?[A-Za-z_][A-Za-z0-9_-]{0,62}\\.py", name)
+    )
+    if type(name) is not str or (name not in SAFE_FILES and not discovered):
         raise ValueError("Python file not allowlisted")
-    if discovery_read and any(word in Path(name).stem.lower() for word in
-                              ("secret", "credential", "token", "password", "api_key")):
+    if discovered and any(word in part.lower() for part in Path(name).parts
+                          for word in ("secret", "credential", "token",
+                                       "password", "api_key", "private")):
         raise ValueError("sensitive source filename refused")
     if base.is_symlink():
         raise RuntimeError("base path is symlink")
@@ -311,7 +346,7 @@ def _public_service_status(service: dict) -> dict:
     public = dict(service)
     # Command lines can include sensitive flags: provide identity evidence only.
     raw = public.pop("ExecStart", None)
-    public["exec_start_contains_v2_path"] = str(ROOT) in (raw or "")
+    public["exec_start_v2_module_verified"] = _valid_v2_exec(raw or "")
     return public
 
 
@@ -352,7 +387,7 @@ def _service_identity() -> tuple[dict, list[dict]]:
             service.get("LoadState") != "loaded" or
             service.get("User") != "ubuntu" or
             service.get("WorkingDirectory") != str(ROOT) or
-            str(ROOT) not in service.get("ExecStart", "") or
+            not _valid_v2_exec(service.get("ExecStart", "")) or
             not str(service.get("FragmentPath", "")).startswith("/etc/systemd/system/")):
         raise RuntimeError("NO_GO: fixed V2 systemd unit identity unverified")
     return service, processes
@@ -419,7 +454,10 @@ def _stop(args: dict) -> dict:
     pid, ticks = args["expected_pid"], args["expected_ticks"]
     if (type(pid) is not int or type(ticks) is not int or pid < 2 or ticks < 1
             or service.get("ActiveState") != "active" or service.get("MainPID") != str(pid)
-            or len(procs) != 1 or procs[0]["pid"] != pid or procs[0]["start_ticks"] != ticks):
+            or len([p for p in procs if p["pid"] == pid and
+                    p["start_ticks"] == ticks and
+                    p.get("role") == "trade_demo"]) != 1 or
+            sum(p.get("role") == "trade_demo" for p in procs) != 1):
         raise RuntimeError("NO_GO: V2 service/process identity changed")
     # The service manager, not arbitrary signals or shell, controls the process.
     try:
