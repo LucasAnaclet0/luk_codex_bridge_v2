@@ -62,6 +62,17 @@ class V2OperatorOfflineTests(unittest.TestCase):
             mod.run(self._patch("0"*64))
         self.assertEqual(self.file.read_bytes(), self.old)
 
+    def test_read_only_discovery_of_new_v2_python_file(self):
+        file = self.bot / "improved_v2_strategy.py"
+        file.write_text("def strategy():\n    return 42\n")
+        observed = mod.run({"action": "source_read", "file": file.name,
+                            "start_line": 1, "line_count": 2})
+        self.assertIn("return 42", observed["result"]["excerpt"])
+        with self.assertRaises(ValueError):
+            mod.run({"action": "dev_stage_patch", "file": file.name,
+                     "old_text": "return 42", "new_text": "return 43",
+                     "expected_sha256": hashlib.sha256(file.read_bytes()).hexdigest()})
+
     def test_private_and_unknown_files_rejected(self):
         for name in (".env", "../bot.py", "secrets.py", "/etc/passwd"):
             with self.assertRaises(ValueError):
