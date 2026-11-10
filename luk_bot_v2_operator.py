@@ -141,6 +141,9 @@ def _safe_path(base: Path, name: str, *, discovery_read=False) -> Path:
     if type(name) is not str or (name not in SAFE_FILES and not (
             discovery_read and re.fullmatch(r"(?:src/)?[A-Za-z0-9_][A-Za-z0-9_-]{0,63}\.py", name))):
         raise ValueError("Python file not allowlisted")
+    if discovery_read and any(word in Path(name).stem.lower() for word in
+                              ("secret", "credential", "token", "password", "api_key")):
+        raise ValueError("sensitive source filename refused")
     if base.is_symlink():
         raise RuntimeError("base path is symlink")
     p = base
