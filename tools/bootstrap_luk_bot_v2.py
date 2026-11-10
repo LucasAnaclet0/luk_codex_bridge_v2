@@ -26,7 +26,7 @@ SERVICE = "luk-codex-mcp.service"
 MARKER = "# LUK_BOT_TRADER_V2_PLUGIN"
 URL = ("https://raw.githubusercontent.com/LucasAnaclet0/luk_codex_bridge_v2/"
        "12479958db8a1f84b8e4d705909248eb0cae89ff/luk_bot_v2_operator.py")
-EXPECTED_BLOB = "__MODULE_BLOB_SHA__"
+EXPECTED_BLOB = "ab26c2e6b06a16c5cf9a0dbb01084f08173ea5c2"
 
 WRAPPER = """
 # LUK_BOT_TRADER_V2_PLUGIN
@@ -205,12 +205,12 @@ def main():
         atomic_write(MODULE, module_bytes)
         atomic_write(MCP, patch)
         canary = (
-            "from mcp_server import _tools, _tool_payload\\n"
-            "assert len([x for x in _tools() if x['name']=='vps_bot_trader_v2']) == 1\\n"
-            "for payload in ({'action':'shell'}, {'action':'service_stop','command':'kill -9 1'}):\\n"
-            "  try: _tool_payload('vps_bot_trader_v2', payload)\\n"
-            "  except ValueError: pass\\n"
-            "  else: raise AssertionError('unsafe arguments accepted')\\n"
+            "from mcp_server import _tools, _tool_payload\n"
+            "assert len([x for x in _tools() if x['name']=='vps_bot_trader_v2']) == 1\n"
+            "for payload in ({'action':'shell'}, {'action':'service_stop','command':'kill -9 1'}):\n"
+            "  try: _tool_payload('vps_bot_trader_v2', payload)\n"
+            "  except ValueError: pass\n"
+            "  else: raise AssertionError('unsafe arguments accepted')\n"
         )
         env = {"HOME": "/home/ubuntu", "PATH": "/usr/local/bin:/usr/bin:/bin",
                "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C"}
