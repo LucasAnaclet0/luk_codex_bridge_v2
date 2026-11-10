@@ -30,10 +30,12 @@ LOCK = OPS / "operator.lock"
 MAX_FILE = 500_000
 MAX_PATCH = 6_000
 ACTIONS = frozenset(("status", "file_inventory", "source_read", "dev_stage_patch",
-                     "dev_verify", "service_stop", "service_start", "promote_dev", "rollback"))
+                     "dev_verify", "service_stop", "service_start", "service_restart",
+                     "promote_dev", "rollback"))
 CONFIRM = {
     "service_stop": "AUTORIZO_PARAR_BOT_V2_DEMO",
     "service_start": "AUTORIZO_INICIAR_BOT_V2_DEMO",
+    "service_restart": "AUTORIZO_REINICIAR_BOT_V2_DEMO",
     "promote_dev": "AUTORIZO_APLICAR_CODIGO_BOT_V2_DEMO",
     "rollback": "AUTORIZO_RESTAURAR_BOT_V2_DEMO",
 }
@@ -351,33 +353,65 @@ def _public_service_status(service: dict) -> dict:
 
 
 def _status() -> dict:
+    service = _service()
     return {
         "root_exists": ROOT.is_dir() and not ROOT.is_symlink(),
-        "service": _public_service_status(_service()),
+        "service": _public_service_status(service),
+        "demo_source_guard_proof": _demo_policy_proof(),
         "service_identity_diagnostics": _service_probe(),
         "observed_processes": _processes(),
         "source_files": _inventory(),
         "database_observations": _sqlite_summary(),
         "journal": _log_summary(),
         "host_attested": False,
-        "ready_for_mutation": False,
+        "ready_for_mutation": (service.get("status") == "OBSERVED"
+                               and _demo_policy_proof()),
         "ready_to_trade": False,
     }
 
 
 def _demo_policy_proof() -> bool:
-    # No assumptions about new V2's API setup: do not start it via this tool
-    # until evidence for Demo isolation is available in the code.
-    if not ROOT.is_dir() or ROOT.is_symlink():
+    """Structural proof of mandatory OKX Demo guards; never proves live exchange."""
+    try:
+        script = _read(_safe_path(ROOT, "v2/demo.py")).decode("utf-8")
+        tree = ast.parse(script, filename="v2/demo.py")
+    except (OSError, ValueError, RuntimeError, UnicodeError, SyntaxError):
         return False
-    for name in ("trading.py", "demo_execution.py", "src/trading.py", "src/executor.py"):
-        try:
-            content = _read(ROOT / name).decode("utf-8")
-        except (OSError, RuntimeError, UnicodeError):
-            continue
-        if "set_sandbox_mode(True)" in content and "assert_demo" in content:
-            return True
-    return False
+    functions = {node.name: node for node in tree.body
+                 if isinstance(node, ast.FunctionDef)}
+    required = {"assert_env", "make_exchange", "assert_demo",
+                "assert_environment_ready", "place", "cycle",
+                "main", "v1_processes"}
+    if not required.issubset(functions):
+        return False
+    strings = {node.value for node in ast.walk(tree)
+               if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+    if not {"USAR_TESTNET", "LUK_V2_DEMO_APPROVED",
+            "I_APPROVE_OKX_DEMO_ONLY", "x-simulated-trading"}.issubset(strings):
+        return False
+    def call_lines(func, name):
+        return sorted(node.lineno for node in ast.walk(functions[func])
+                      if isinstance(node, ast.Call) and
+                      (getattr(node.func, "id", None) == name or
+                       getattr(node.func, "attr", None) == name))
+    for func, name in (("make_exchange", "assert_env"),
+                       ("make_exchange", "set_sandbox_mode"),
+                       ("make_exchange", "assert_demo"),
+                       ("place", "assert_demo"),
+                       ("place", "v1_processes"),
+                       ("place", "create_order"),
+                       ("main", "v1_processes"),
+                       ("main", "assert_environment_ready")):
+        if not call_lines(func, name):
+            return False
+    if not (call_lines("make_exchange", "assert_env")[0] <
+            call_lines("make_exchange", "set_sandbox_mode")[0] <
+            call_lines("make_exchange", "assert_demo")[0]):
+        return False
+    if not (call_lines("place", "assert_demo")[0] <
+            call_lines("place", "create_order")[0]):
+        return False
+    return True
 
 
 def _service_identity() -> tuple[dict, list[dict]]:
