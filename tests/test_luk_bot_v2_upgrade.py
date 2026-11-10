@@ -2,6 +2,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 import luk_bot_v2_operator
@@ -43,6 +44,36 @@ class V2UpdaterSafetyTests(unittest.TestCase):
         with patch.object(upgrade, "command", wraps=upgrade.command):
             upgrade.canary(source)
         self.assertFalse((self.base / ".luk-terminal-backups").exists())
+
+    def test_heartbeat_retries_until_authenticated_service_is_ready(self):
+        unauthorized = urllib.error.HTTPError(
+            "http://127.0.0.1:8765/mcp", 401, "Unauthorized", {}, None
+        )
+        with patch.object(upgrade.urllib.request, "urlopen",
+                          side_effect=[urllib.error.URLError("refused"),
+                                       unauthorized]) as open_request, \
+             patch.object(upgrade.time, "sleep") as pause:
+            self.assertTrue(upgrade.auth_heartbeat(retries=3))
+            self.assertEqual(open_request.call_count, 2)
+            pause.assert_called_once_with(1)
+
+    def test_heartbeat_fails_closed_if_never_ready(self):
+        with patch.object(upgrade.urllib.request, "urlopen",
+                          side_effect=urllib.error.URLError("refused")) as req, \
+             patch.object(upgrade.time, "sleep") as pause:
+            self.assertFalse(upgrade.auth_heartbeat(retries=3))
+            self.assertEqual(req.call_count, 3)
+            self.assertEqual(pause.call_count, 2)
+
+    def test_heartbeat_rejects_unexpected_http_status(self):
+        unverified = urllib.error.HTTPError(
+            "http://127.0.0.1:8765/mcp", 403, "Forbidden", {}, None
+        )
+        with patch.object(upgrade.urllib.request, "urlopen",
+                          side_effect=unverified), \
+             patch.object(upgrade.time, "sleep") as pause:
+            self.assertFalse(upgrade.auth_heartbeat(retries=3))
+            pause.assert_not_called()
 
     def test_mismatch_never_touches_module(self):
         previous = self.operator.read_bytes()
