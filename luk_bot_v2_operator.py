@@ -20,7 +20,7 @@ import tempfile
 
 ROOT = Path("/home/ubuntu/luk_bot_trader_v2")
 UNIT = "luk-bot-trader-v2.service"
-UNIT_NAME_PATTERN = re.compile(r"luk-[a-z0-9-]*v2[a-z0-9-]*\\.service")
+UNIT_NAME_PATTERN = re.compile(r"luk-[a-z0-9-]*v2[a-z0-9-]*\.service")
 BRIDGE = Path("/home/ubuntu/luk_codex_bridge_v2")
 DEV = BRIDGE / ".luk-bot-v2-dev-staging"
 OPS = BRIDGE / ".luk-bot-v2-operator"
