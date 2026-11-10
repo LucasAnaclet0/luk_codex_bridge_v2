@@ -28,5 +28,5 @@ jobs:
               ast.parse(open(path, encoding='utf-8').read(), filename=path)
           print("BOT_V2_AST_OK")
           PY
-          python -m unittest discover -s tests -p 'test_luk_bot_v2_operator.py' -v
+          python -m unittest discover -s tests -p 'test_luk_bot_v2*.py' -v
           sha256sum tools/bootstrap_luk_bot_v2.py luk_bot_v2_operator.py
