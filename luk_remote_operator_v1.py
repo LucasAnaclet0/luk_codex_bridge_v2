@@ -283,11 +283,16 @@ def _promote(args: dict) -> dict:
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     backup = BACKUPS / (name + "." + stamp + ".bak")
     _atomic(backup, before)
-    _atomic(_source(BOT, name), after, mode=0o644)
     record = {"file": name, "backup": str(backup), "previous_sha256": _sha(before),
               "promoted_sha256": _sha(after), "timestamp": stamp}
-    _atomic(STATE / "last_promotion.json",
-            json.dumps(record, sort_keys=True).encode("utf-8"))
+    live_path = _source(BOT, name)
+    try:
+        _atomic(live_path, after, mode=0o644)
+        _atomic(STATE / "last_promotion.json",
+                json.dumps(record, sort_keys=True).encode("utf-8"))
+    except Exception:
+        _atomic(live_path, before, mode=0o644)
+        raise
     return {"status": "MAIN_CODE_PROMOTED_NO_RESTART", "file": name,
             "backup": str(backup), "previous_sha256": _sha(before),
             "installed_sha256": _sha(after), "tests_executed": False}
