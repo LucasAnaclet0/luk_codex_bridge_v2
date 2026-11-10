@@ -344,9 +344,10 @@ def _sqlite_summary() -> list[dict]:
                         "ORDER BY symbol LIMIT 11"
                     ).fetchall()
                     obj["positions_summary"] = [
-                        {"symbol": str(sym)[:30], "cost_usdt": round(float(cost), 4),
-                         "stop_take_valid": bool(0 < float(stop) < float(entry)
-                                                 < float(take))}
+                        {"symbol": str(sym)[:30], "cost_usdt": round(float(cost or 0), 4),
+                         "stop_take_valid": bool(stop is not None and entry is not None
+                                                 and take is not None and
+                                                 0 < float(stop) < float(entry) < float(take))}
                         for sym, cost, entry, stop, take in p[:10]
                     ]
                     obj["positions_truncated"] = len(p) > 10
