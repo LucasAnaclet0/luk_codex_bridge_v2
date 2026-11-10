@@ -481,6 +481,12 @@ def _atomic(path: Path, payload: bytes, mode=0o600):
 
 
 def _stage_patch(args: dict) -> dict:
+    """Patch live source to DEV, or append a verified change to existing DEV.
+
+    Never writes to ROOT. Hashes are required for every stage operation.
+    Existing staged content may be continued only if its current hash matches
+    the supplied expected_sha256; deployment still requires exact LIVE hash.
+    """
     expected = args["expected_sha256"]
     if type(expected) is not str or not re.fullmatch("[a-f0-9]{64}", expected):
         raise ValueError("expected_sha256 required")
@@ -488,10 +494,19 @@ def _stage_patch(args: dict) -> dict:
     if type(old) is not str or type(new) is not str or not (0 < len(old) <= MAX_PATCH) or len(new) > MAX_PATCH:
         raise ValueError("bad patch")
     name = args["file"]
-    path = _safe_path(ROOT, name)
-    base = _read(path)
-    if _hash(base) != expected:
-        raise RuntimeError("live file hash changed")
+    live_path = _safe_path(ROOT, name)
+    live = _read(live_path)
+    staged = _safe_path(DEV, name)
+    if _hash(live) == expected:
+        base = live
+        origin = "LIVE_TO_DEV"
+    elif staged.is_file() and not staged.is_symlink():
+        base = _read(staged)
+        if _hash(base) != expected:
+            raise RuntimeError("staged/live file hash changed")
+        origin = "STAGED_TO_DEV"
+    else:
+        raise RuntimeError("staged/live file hash changed")
     original = base.decode("utf-8")
     if original.count(old) != 1:
         raise RuntimeError("patch anchor not unique")
@@ -499,11 +514,12 @@ def _stage_patch(args: dict) -> dict:
     if len(candidate) > MAX_FILE:
         raise RuntimeError("result too large")
     ast.parse(candidate.decode("utf-8"), filename=name)
-    staged = _safe_path(DEV, name)
     staged.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     _atomic(staged, candidate)
-    return {"status": "STAGED_ONLY", "file": name, "live_sha256": expected,
-            "staged_sha256": _hash(candidate), "main_changed": False, "tests_run": False}
+    return {"status": "STAGED_ONLY", "file": name,
+            "live_sha256": _hash(live),
+            "staged_sha256": _hash(candidate), "origin": origin,
+            "main_changed": False, "tests_run": False}
 
 
 def _verify(name: str) -> dict:
@@ -581,7 +597,8 @@ def _restart(args: dict) -> dict:
 
 
 def _promote(args: dict) -> dict:
-    _ensure_stopped()
+    # v2/demo.py is independent from Telegram menu; the verified menu may stay online.
+    (_ensure_trade_stopped() if args["file"] == "v2/demo.py" else _ensure_stopped())
     info = _verify(args["file"])
     if info["live_sha256"] != args["expected_sha256"] or info["staged_sha256"] != args["staged_sha256"]:
         raise RuntimeError("NO_GO: source hash mismatch")
@@ -604,7 +621,7 @@ def _promote(args: dict) -> dict:
 
 
 def _rollback(args: dict) -> dict:
-    _ensure_stopped()
+    (_ensure_trade_stopped() if args["file"] == "v2/demo.py" else _ensure_stopped())
     if not MARKER.is_file() or MARKER.is_symlink():
         raise RuntimeError("NO_GO: deployment journal unavailable")
     record = json.loads(MARKER.read_text())
