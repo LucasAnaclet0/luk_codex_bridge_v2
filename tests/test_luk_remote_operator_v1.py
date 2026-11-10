@@ -123,6 +123,23 @@ class OperatorOfflineTests(unittest.TestCase):
                                    "confirmation": op.CONFIRM["main_start"],
                                    "command": "rm -rf /"})
 
+    def test_active_campaign_prevents_main_launch(self):
+        with patch.object(op, "_check_stopped", return_value=None):
+            with patch.object(op, "_campaign_processes", return_value=[54321]):
+                with self.assertRaisesRegex(RuntimeError, "campaign process active"):
+                    op.run("main_start", {"action": "main_start",
+                                           "confirmation": op.CONFIRM["main_start"]})
+
+    def test_stop_requires_real_pid_start_ticks(self):
+        info = {"pid": 500, "start_ticks": 300, "cwd": str(self.bot)}
+        wrong = {"action": "main_stop", "confirmation": op.CONFIRM["main_stop"],
+                 "expected_pid": 500, "expected_start_ticks": 301}
+        with patch.object(op, "_main_processes", return_value=[info]):
+            with patch.object(op.os, "kill") as kill:
+                with self.assertRaises(RuntimeError):
+                    op.run("main_stop", wrong)
+                kill.assert_not_called()
+
     def test_bootstrap_patcher_does_not_replace_v2(self):
         server = (
             "# LUK_TERMINAL_V2_MAIN_MAINTENANCE\n"
