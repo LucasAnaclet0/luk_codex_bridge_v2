@@ -18,6 +18,14 @@ class CombinedMCPV2Canary(unittest.TestCase):
         self.assertEqual(original.count(old_guard), 1)
         augmented = original.replace(old_guard, v1.WRAPPER + "\n" + old_guard)
         candidate = v2.patch_mcp(augmented).decode("utf-8")
+        import ast
+        tree = ast.parse(candidate)
+        tools_defs = [x for x in tree.body if isinstance(x, ast.FunctionDef) and x.name == "_tools"]
+        payload_defs = [x for x in tree.body if isinstance(x, ast.FunctionDef) and x.name == "_tool_payload"]
+        self.assertEqual(len(tools_defs), 2, "V2 must not add a third wrapper")
+        self.assertEqual(len(payload_defs), 2, "V2 must not add a third dispatcher wrapper")
+        self.assertEqual(candidate.count("_luk_v2_tool_spec(),"), 1)
+        self.assertEqual(candidate.count("return _luk_v2_dispatch(arguments)"), 1)
         self.assertEqual(candidate.count("LUK_BOT_TRADER_V2_PLUGIN"), 1)
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
