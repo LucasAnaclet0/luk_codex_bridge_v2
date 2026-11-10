@@ -107,7 +107,7 @@ def _campaign_processes() -> list[int]:
                     continue
                 proc = Path("/proc") / entry.name
                 try:
-                    argv = (proc / "cmdline").read_bytes().split(b"\\x00")
+                    argv = (proc / "cmdline").read_bytes().split(b"\x00")
                     if not any(x == b"main.py" or x.endswith(b"/main.py") for x in argv):
                         continue
                     cwd = os.readlink(proc / "cwd")
