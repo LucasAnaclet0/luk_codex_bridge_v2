@@ -25,8 +25,8 @@ MODULE = BRIDGE / "luk_bot_v2_operator.py"
 SERVICE = "luk-codex-mcp.service"
 MARKER = "# LUK_BOT_TRADER_V2_PLUGIN"
 URL = ("https://raw.githubusercontent.com/LucasAnaclet0/luk_codex_bridge_v2/"
-       "2b9b1ced6be99f5468453977b677bea560e40475/luk_bot_v2_operator.py")
-EXPECTED_BLOB = "2db35d9fbeee35b6e1d1e8026def8a84054f7b49"
+       "c99502db7201690e1bb17e3c9874d7018f2f35f8/luk_bot_v2_operator.py")
+EXPECTED_BLOB = "be6807f6f939cdc5c6b5fe85e89634c06c397ad0"
 
 WRAPPER = """
 # LUK_BOT_TRADER_V2_PLUGIN
@@ -53,7 +53,7 @@ def _tools():
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": sorted(_luk_v2_actions)},
-                "file": {"type": "string", "enum": sorted(_luk_v2_files)},
+                "file": {"type": "string", "maxLength": 70},
                 "start_line": {"type": "integer", "minimum": 1},
                 "line_count": {"type": "integer", "minimum": 1, "maximum": 100},
                 "old_text": {"type": "string", "minLength": 1, "maxLength": 6000},
