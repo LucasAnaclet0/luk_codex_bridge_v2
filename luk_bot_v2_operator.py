@@ -427,7 +427,37 @@ def _service_identity() -> tuple[dict, list[dict]]:
     return service, processes
 
 
+def _ensure_trade_stopped():
+    """For start/restart: ignore verified Telegram menu, reject all unknown workers."""
+    service, processes = _service_identity()
+    if service.get("ActiveState") not in ("inactive", "failed") or service.get("MainPID") not in ("0", ""):
+        raise RuntimeError("NO_GO: V2 systemd service not stopped")
+    if any(p.get("role") != "telegram_menu" for p in processes):
+        raise RuntimeError("NO_GO: unknown or trading V2 Python process remains")
+    if processes:
+        # Menu process is independent: require fixed secondary unit attestation.
+        try:
+            cp = _cmd(["/usr/bin/systemctl", "show", "--no-pager",
+                       "luk-bot-trader-v2-telegram-menu.service",
+                       "-p", "LoadState", "-p", "ActiveState", "-p", "MainPID",
+                       "-p", "User", "-p", "WorkingDirectory", "-p", "ExecStart"])
+        except (OSError, subprocess.TimeoutExpired):
+            raise RuntimeError("NO_GO: Telegram menu identity unavailable") from None
+        if cp.returncode:
+            raise RuntimeError("NO_GO: Telegram menu service inaccessible")
+        fields = dict(line.split("=", 1) for line in cp.stdout.splitlines() if "=" in line)
+        if (fields.get("LoadState") != "loaded" or
+                fields.get("User") != "ubuntu" or
+                fields.get("WorkingDirectory") != str(ROOT) or
+                "v2.telegram_menu" not in fields.get("ExecStart", "") or
+                len(processes) != 1 or
+                fields.get("MainPID") != str(processes[0]["pid"])):
+            raise RuntimeError("NO_GO: Telegram menu process unverified")
+    return service
+
+
 def _ensure_stopped():
+    """Code promotion requires no Python process from V2 root, including menu."""
     service, processes = _service_identity()
     if service.get("ActiveState") not in ("inactive", "failed") or service.get("MainPID") not in ("0", ""):
         raise RuntimeError("NO_GO: V2 systemd service not stopped")
@@ -500,12 +530,12 @@ def _stop(args: dict) -> dict:
         raise RuntimeError("NO_GO: systemd stop failed") from None
     if result.returncode:
         raise RuntimeError("NO_GO: systemd denied stop")
-    _ensure_stopped()
+    _ensure_trade_stopped()
     return {"status": "V2_STOPPED", "pid": pid, "main_v1_changed": False}
 
 
 def _start() -> dict:
-    verified_service = _ensure_stopped()
+    verified_service = _ensure_trade_stopped()
     if not _demo_policy_proof():
         raise RuntimeError("NO_GO: V2 explicit OKX DEMO proof missing")
     try:
@@ -518,6 +548,36 @@ def _start() -> dict:
     if service.get("ActiveState") != "active":
         raise RuntimeError("NO_GO: V2 start not active")
     return {"status": "V2_SERVICE_ACTIVE_NOT_TRADE_VERIFIED", "main_v1_changed": False}
+
+
+def _restart(args: dict) -> dict:
+    """Restart one observed V2 demo service only. Can trigger Demo orders."""
+    service, procs = _service_identity()
+    pid, ticks = args["expected_pid"], args["expected_ticks"]
+    if (type(pid) is not int or type(ticks) is not int or pid < 2 or ticks < 1
+            or service.get("ActiveState") != "active" or
+            service.get("MainPID") != str(pid) or
+            sum(p.get("role") == "trade_demo" for p in procs) != 1 or
+            not any(p["pid"] == pid and p["start_ticks"] == ticks and
+                    p.get("role") == "trade_demo" for p in procs)):
+        raise RuntimeError("NO_GO: V2 restart identity unverified")
+    if not _demo_policy_proof():
+        raise RuntimeError("NO_GO: V2 explicit OKX DEMO proof missing")
+    try:
+        result = _cmd(["/usr/bin/sudo", "-n", "/usr/bin/systemctl",
+                       "restart", service["Unit"]], timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError("NO_GO: V2 systemd restart failed") from None
+    if result.returncode:
+        raise RuntimeError("NO_GO: V2 systemd restart denied")
+    after = _service()
+    if (after.get("status") != "OBSERVED" or
+            after.get("ActiveState") != "active" or
+            after.get("MainPID") in (str(pid), "0", "")):
+        raise RuntimeError("NO_GO: V2 restart outcome not confirmed")
+    return {"status": "V2_RESTARTED_DEMO_RUNNING_NOT_RECONCILED",
+            "previous_pid": pid, "new_pid": after["MainPID"],
+            "main_v1_changed": False}
 
 
 def _promote(args: dict) -> dict:
@@ -575,6 +635,7 @@ def run(args: dict) -> dict:
         "dev_verify": {"action", "file"},
         "service_stop": {"action", "confirmation", "expected_pid", "expected_ticks"},
         "service_start": {"action", "confirmation"},
+        "service_restart": {"action", "confirmation", "expected_pid", "expected_ticks"},
         "promote_dev": {"action", "confirmation", "file", "expected_sha256", "staged_sha256"},
         "rollback": {"action", "confirmation", "file"},
     }
@@ -616,6 +677,8 @@ def run(args: dict) -> dict:
             result = _stop(args)
         elif action == "service_start":
             result = _start()
+        elif action == "service_restart":
+            result = _restart(args)
         elif action == "promote_dev":
             result = _promote(args)
         elif action == "rollback":
