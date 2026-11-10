@@ -101,8 +101,8 @@ class V2OperatorOfflineTests(unittest.TestCase):
             "old_text": "return 1", "new_text": "return 2",
             "expected_sha256": current,
         })["result"]
-        with patch.object(mod, "_ensure_trade_stopped") as scoped, \\
-             patch.object(mod, "_ensure_stopped") as strict:
+        with (patch.object(mod, "_ensure_trade_stopped") as scoped,
+              patch.object(mod, "_ensure_stopped") as strict):
             out = mod.run({
                 "action": "promote_dev", "file": "v2/demo.py",
                 "expected_sha256": current,
