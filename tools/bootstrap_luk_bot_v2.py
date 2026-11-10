@@ -35,6 +35,14 @@ from luk_bot_v2_operator import ACTIONS as _luk_v2_actions
 from luk_bot_v2_operator import SAFE_FILES as _luk_v2_files
 from luk_bot_v2_operator import run as _luk_v2_run
 
+def _luk_v2_add_tool(existing):
+    if not isinstance(existing, list):
+        raise RuntimeError("V2 registry is not a list")
+    if any(isinstance(item, dict) and
+           item.get("name") == "vps_bot_trader_v2" for item in existing):
+        raise RuntimeError("duplicate V2 registry tool")
+    return [*existing, _luk_v2_tool_spec()]
+
 def _luk_v2_tool_spec():
     return {
         "name": "vps_bot_trader_v2",
@@ -107,15 +115,23 @@ def blob_hash(data):
 
 
 def patch_mcp(source):
-    """Insert V2 in the oldest MCP handlers; do not add a recursive wrapper."""
+    """Instrument the currently active handlers in place, without new wrappers.
+
+    The installed MCP may already contain many wrapper functions: changing
+    their call chain, or assuming the original registry returns a literal list,
+    is unsafe. This patch modifies only the last (active) _tools return values
+    and adds an early exact-name dispatch to the last _tool_payload.
+    """
     if MARKER in source:
-        fail("operator already installed")
+        fail("V2 tool already installed")
     if "# LUK_CONTROLLED_OPERATOR_V1" not in source:
         fail("existing controlled operator marker not found")
     tree = ast.parse(source)
-    funcs = {name: [node for node in tree.body
-                    if isinstance(node, ast.FunctionDef) and node.name == name]
-             for name in ("_tools", "_tool_payload", "main")}
+    funcs = {
+        name: [node for node in tree.body
+               if isinstance(node, ast.FunctionDef) and node.name == name]
+        for name in ("_tools", "_tool_payload", "main")
+    }
     classes = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
     if not all(funcs.values()) or "Handler" not in classes:
         fail("required MCP definitions missing")
@@ -128,29 +144,86 @@ def patch_mcp(source):
               and node.test.comparators[0].value == "__main__"]
     if len(guards) != 1 or tree.body[-1] is not guards[0]:
         fail("MCP main guard shape unexpected")
-    base_tools = funcs["_tools"][0]
-    base_payload = funcs["_tool_payload"][0]
-    if (not base_tools.body or not isinstance(base_tools.body[0], ast.Return)
-            or not isinstance(base_tools.body[0].value, ast.List)
-            or not base_payload.body):
-        fail("original MCP function layout unrecognized")
-    lines = source.splitlines(keepends=True)
-    return_line = base_tools.body[0].lineno
-    if "return [" not in lines[return_line - 1]:
-        fail("base tool registry layout changed")
-    insertions = [
-        (return_line, "        _luk_v2_tool_spec()," + chr(10)),
-        (base_payload.body[0].lineno - 1,
-         '    if name == "vps_bot_trader_v2":' + chr(10)
-         + '        return _luk_v2_dispatch(arguments)' + chr(10)),
-        (guards[0].lineno - 1, HELPERS + chr(10)),
-    ]
-    for position, code in sorted(insertions, key=lambda pair: pair[0], reverse=True):
-        lines.insert(position, code)
-    patched = "".join(lines)
-    compile(patched, str(MCP), "exec")
-    return patched.encode("utf-8")
 
+    active_tools = funcs["_tools"][-1]
+    active_payload = funcs["_tool_payload"][-1]
+    if (len(active_tools.args.args) != 0 or
+            [arg.arg for arg in active_payload.args.args[:2]] !=
+            ["name", "arguments"] or
+            not active_payload.body):
+        fail("active MCP signatures unrecognized")
+
+    class _ReturnFinder(ast.NodeVisitor):
+        def __init__(self):
+            self.results = []
+
+        def visit_FunctionDef(self, node):
+            return  # Do not rewrite returns of nested functions.
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+        visit_Lambda = visit_FunctionDef
+
+        def visit_Return(self, node):
+            self.results.append(node)
+
+    finder = _ReturnFinder()
+    for statement in active_tools.body:
+        finder.visit(statement)
+    returns = finder.results
+    if not returns or any(node.value is None for node in returns):
+        fail("active tool registry lacks safe return values")
+
+    src = source.encode("utf-8")
+    lines = src.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+
+    def pos(line, col):
+        if not isinstance(line, int) or line <= 0 or line > len(lines):
+            fail("AST location out of bounds")
+        if col < 0 or col > len(lines[line - 1]):
+            fail("AST column out of bounds")
+        return offsets[line - 1] + col
+
+    edits = []
+    for node in returns:
+        value = node.value
+        a = pos(value.lineno, value.col_offset)
+        b = pos(value.end_lineno, value.end_col_offset)
+        if not a < b:
+            fail("empty tool registry return expression")
+        # No rebinding _tools => prior wrappers do not recurse.
+        edits.append((a, b, b"_luk_v2_add_tool(" + src[a:b] + b")"))
+
+    first = active_payload.body[0]
+    if (isinstance(first, ast.Expr) and
+            isinstance(first.value, ast.Constant) and
+            isinstance(first.value.value, str)):
+        if len(active_payload.body) < 2:
+            fail("payload has only docstring")
+        first = active_payload.body[1]
+    if first.lineno == active_payload.lineno:
+        fail("single-line MCP payload unsupported")
+
+    indent = lines[first.lineno - 1][:first.col_offset]
+    if not indent or indent.strip() or b"\t" in indent:
+        fail("payload indentation unrecognized")
+    payload_branch = (
+        indent + b'if name == "vps_bot_trader_v2":\n'
+        + indent + b'    return _luk_v2_dispatch(arguments)\n'
+    )
+    edits.append((pos(first.lineno, 0), pos(first.lineno, 0), payload_branch))
+
+    # Helpers are defined after old registrations, but before __main__ startup.
+    guard_start = pos(guards[0].lineno, 0)
+    edits.append((guard_start, guard_start, HELPERS.encode("utf-8") + b"\n"))
+
+    for a, b, replacement in sorted(edits, key=lambda entry: entry[0], reverse=True):
+        src = src[:a] + replacement + src[b:]
+    result = src.decode("utf-8")
+    compile(result, str(MCP), "exec")
+    return result.encode("utf-8")
 
 def verify_service():
     state = run(["systemctl", "show", SERVICE,
