@@ -77,32 +77,64 @@ def _candidate_units() -> list[str]:
     return sorted(names)[:25]
 
 
-def _service() -> dict:
+def _service_probe() -> dict:
+    """Return only bounded identity predicates, never unit command lines/env."""
+    facts = []
     fields = [arg for prop in ALLOWED_SERVICE_FIELDS for arg in ("-p", prop)]
-    verified = []
     for unit in _candidate_units():
         try:
             cp = _cmd(["/usr/bin/systemctl", "show", "--no-pager", unit, *fields])
         except (OSError, subprocess.TimeoutExpired):
+            facts.append({"unit": unit, "status": "SYSTEMD_UNAVAILABLE"})
             continue
         if cp.returncode:
+            facts.append({"unit": unit, "status": "SYSTEMD_UNAVAILABLE"})
             continue
         data = {}
         for line in cp.stdout.splitlines():
             k, sep, v = line.partition("=")
             if sep and k in ALLOWED_SERVICE_FIELDS:
                 data[k] = v[:1024]
-        if (data.get("LoadState") == "loaded" and
-                data.get("User") == "ubuntu" and
-                data.get("WorkingDirectory") == str(ROOT) and
-                str(ROOT) in data.get("ExecStart", "")):
-            verified.append({"status": "OBSERVED", "Unit": unit, **data})
-    if len(verified) == 1:
-        return verified[0]
-    if len(verified) > 1:
-        return {"status": "AMBIGUOUS_V2_UNITS", "candidate_count": len(verified)}
-    return {"status": "UNVERIFIED_V2_SERVICE", "candidate_names": _candidate_units()}
+        checks = {
+            "load_state_loaded": data.get("LoadState") == "loaded",
+            "user_ubuntu": data.get("User") == "ubuntu",
+            "working_directory_v2": data.get("WorkingDirectory") == str(ROOT),
+            "exec_start_mentions_v2": str(ROOT) in data.get("ExecStart", ""),
+            "unit_file_systemd": data.get("FragmentPath", "").startswith(
+                "/etc/systemd/system/"),
+        }
+        facts.append({"unit": unit, "status": "OBSERVED",
+                      "active_state": data.get("ActiveState", "UNKNOWN"),
+                      "main_pid": data.get("MainPID", "UNKNOWN"),
+                      "identity_checks": checks})
+    return {"status": "OBSERVED", "units": facts[:25]}
 
+
+def _service() -> dict:
+    """Bind lifecycle strictly to fixed trade service; ignore Telegram menu unit."""
+    target = UNIT
+    fields = [arg for prop in ALLOWED_SERVICE_FIELDS for arg in ("-p", prop)]
+    try:
+        cp = _cmd(["/usr/bin/systemctl", "show", "--no-pager", target, *fields])
+    except (OSError, subprocess.TimeoutExpired):
+        return {"status": "UNVERIFIED_V2_SERVICE",
+                "candidate_names": _candidate_units()}
+    if cp.returncode:
+        return {"status": "UNVERIFIED_V2_SERVICE",
+                "candidate_names": _candidate_units()}
+    data = {}
+    for line in cp.stdout.splitlines():
+        k, sep, v = line.partition("=")
+        if sep and k in ALLOWED_SERVICE_FIELDS:
+            data[k] = v[:1024]
+    if (data.get("LoadState") == "loaded" and
+            data.get("User") == "ubuntu" and
+            data.get("WorkingDirectory") == str(ROOT) and
+            str(ROOT) in data.get("ExecStart", "") and
+            data.get("FragmentPath", "").startswith("/etc/systemd/system/")):
+        return {"status": "OBSERVED", "Unit": target, **data}
+    return {"status": "UNVERIFIED_V2_SERVICE",
+            "candidate_names": _candidate_units()}
 
 
 def _proc_info(pid: int) -> dict | None:
@@ -161,21 +193,50 @@ def _read(path: Path) -> bytes:
 
 
 def _inventory() -> dict:
+    """Find Python modules in bounded V2 source tree, no symlink traversal."""
     if not ROOT.is_dir() or ROOT.is_symlink():
         return {"status": "V2_DIRECTORY_MISSING", "root": str(ROOT)}
-    out = []
-    for folder in (ROOT, ROOT / "src"):
-        if not folder.is_dir() or folder.is_symlink():
+    found = []
+    skipped = 0
+    visited = 0
+    excluded = {"venv", ".venv", "__pycache__", "node_modules", ".git",
+                "site-packages", "data", "logs", "backups", "secrets", "private",
+                "credentials", "keys", ".luk-bot-v2-operator"}
+    # Breadth-first, bounded to depth 4. No recursive glob or untrusted symlink follows.
+    pending = [(ROOT, 0)]
+    while pending and visited < 180:
+        folder, depth = pending.pop(0)
+        visited += 1
+        if folder.is_symlink():
             continue
         try:
-            for entry in sorted(folder.iterdir()):
-                if entry.is_file() and not entry.is_symlink():
-                    if entry.name.endswith(".py") or entry.name.endswith(".sqlite3") or entry.name.endswith(".db"):
-                        out.append({"file": str(entry.relative_to(ROOT)), "bytes": entry.stat().st_size})
+            children = sorted(folder.iterdir(), key=lambda p: p.name)
         except OSError:
+            skipped += 1
             continue
-    return {"status": "OBSERVED", "root": str(ROOT), "files": out[:75],
-            "files_total_observed": len(out)}
+        for item in children:
+            if item.is_symlink():
+                skipped += 1
+                continue
+            if item.is_dir():
+                if depth < 4 and item.name not in excluded and not item.name.startswith("."):
+                    pending.append((item, depth + 1))
+                continue
+            if item.is_file() and (item.suffix == ".py" or
+                                  (depth <= 1 and item.suffix in (".sqlite3", ".db"))):
+                rel = item.relative_to(ROOT)
+                # Never disclose filenames of secret-like sources.
+                if any(word in item.stem.lower() for word in
+                       ("secret", "credential", "token", "password", "api_key")):
+                    skipped += 1
+                    continue
+                try:
+                    found.append({"file": str(rel), "bytes": item.stat().st_size})
+                except OSError:
+                    skipped += 1
+    return {"status": "OBSERVED", "root": str(ROOT), "files": found[:120],
+            "files_total_observed": len(found), "directories_checked": visited,
+            "entries_skipped": skipped, "inventory_truncated": bool(pending or len(found) > 120)}
 
 
 def _sqlite_summary() -> list[dict]:
@@ -258,6 +319,7 @@ def _status() -> dict:
     return {
         "root_exists": ROOT.is_dir() and not ROOT.is_symlink(),
         "service": _public_service_status(_service()),
+        "service_identity_diagnostics": _service_probe(),
         "observed_processes": _processes(),
         "source_files": _inventory(),
         "database_observations": _sqlite_summary(),
