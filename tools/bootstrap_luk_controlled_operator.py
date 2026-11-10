@@ -25,8 +25,8 @@ MODULE = BRIDGE / "luk_remote_operator_v1.py"
 SERVICE = "luk-codex-mcp.service"
 MARKER = "# LUK_CONTROLLED_OPERATOR_V1"
 URL = ("https://raw.githubusercontent.com/LucasAnaclet0/luk_codex_bridge_v2/"
-       "30f46c50fc9b120206d0522b7f0a8a234f12c895/luk_remote_operator_v1.py")
-EXPECTED_BLOB = "c6b69b64f82dbeeebe0a06cb1289f57b52041bc8"
+       "99d8cf8e8600d86e2507a8137d43905fe6c13b5e/luk_remote_operator_v1.py")
+EXPECTED_BLOB = "8e87fcf89f620ff0a3ee6ff414b70946915aa55d"
 
 WRAPPER = """
 # LUK_CONTROLLED_OPERATOR_V1
