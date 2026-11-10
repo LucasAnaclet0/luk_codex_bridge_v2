@@ -176,6 +176,20 @@ def _atomic(path: Path, content: bytes, mode=0o600):
 def _check_stopped():
     if _main_processes():
         raise RuntimeError("NO_GO: MAIN still running; no code writes")
+    try:
+        locks = subprocess.run(
+            ["/usr/bin/lslocks", "--noheadings", "--output", "PID,TYPE,PATH"],
+            capture_output=True, text=True, timeout=5, check=False,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError("NO_GO: kernel lock table unavailable") from None
+    if locks.returncode:
+        raise RuntimeError("NO_GO: kernel locks not verified")
+    for entry in locks.stdout.splitlines():
+        parts = entry.split(maxsplit=2)
+        if len(parts) == 3 and parts[1] == "FLOCK" and parts[2] == str(MAIN_LOCK):
+            raise RuntimeError("NO_GO: MAIN lock still held")
     if not PYTHON.is_file():
         raise RuntimeError("python interpreter unavailable")
 
@@ -224,8 +238,13 @@ def _start_main() -> dict:
     logdir = BOT / "logs"
     if not logdir.is_dir() or logdir.is_symlink():
         raise RuntimeError("NO_GO: logs directory unavailable")
-    if not PYTHON.is_file() or PYTHON.is_symlink():
-        raise RuntimeError("NO_GO: virtualenv python unavailable")
+    try:
+        real_python = PYTHON.resolve(strict=True)
+        trusted_python = str(real_python).startswith("/usr/bin/python")
+        if not real_python.is_file() or not trusted_python:
+            raise RuntimeError("NO_GO: virtualenv Python resolves outside trusted OS interpreter")
+    except (OSError, RuntimeError):
+        raise RuntimeError("NO_GO: virtualenv interpreter unverified") from None
     env = {"HOME": "/home/ubuntu", "PATH": "/home/ubuntu/luk_bot_trader/venv/bin:/usr/bin:/bin",
            "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1",
            "PYTHONUNBUFFERED": "1"}
