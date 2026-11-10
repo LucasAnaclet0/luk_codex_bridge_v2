@@ -73,6 +73,46 @@ class V2OperatorOfflineTests(unittest.TestCase):
                      "old_text": "return 42", "new_text": "return 43",
                      "expected_sha256": hashlib.sha256(file.read_bytes()).hexdigest()})
 
+    def test_incremental_staging_is_hash_locked_and_live_unchanged(self):
+        first = mod.run(self._patch())["result"]
+        second = mod.run({
+            "action": "dev_stage_patch", "file": "main.py",
+            "expected_sha256": first["staged_sha256"],
+            "old_text": "return 2", "new_text": "return 3",
+        })["result"]
+        self.assertEqual(second["origin"], "STAGED_TO_DEV")
+        self.assertEqual(self.file.read_bytes(), self.old)
+        self.assertIn(b"return 3", (self.dev / "main.py").read_bytes())
+        with self.assertRaisesRegex(RuntimeError, "hash changed"):
+            mod.run({
+                "action": "dev_stage_patch", "file": "main.py",
+                "expected_sha256": first["staged_sha256"],
+                "old_text": "return 3", "new_text": "return 4",
+            })
+        self.assertIn(b"return 3", (self.dev / "main.py").read_bytes())
+
+    def test_demo_promotion_allows_only_verified_menu_after_trading_stopped(self):
+        (self.bot / "v2").mkdir()
+        demo = self.bot / "v2" / "demo.py"
+        demo.write_text("def run():\n    return 1\n")
+        current = hashlib.sha256(demo.read_bytes()).hexdigest()
+        stage = mod.run({
+            "action": "dev_stage_patch", "file": "v2/demo.py",
+            "old_text": "return 1", "new_text": "return 2",
+            "expected_sha256": current,
+        })["result"]
+        with patch.object(mod, "_ensure_trade_stopped") as scoped, \\
+             patch.object(mod, "_ensure_stopped") as strict:
+            out = mod.run({
+                "action": "promote_dev", "file": "v2/demo.py",
+                "expected_sha256": current,
+                "staged_sha256": stage["staged_sha256"],
+                "confirmation": mod.CONFIRM["promote_dev"],
+            })
+            self.assertEqual(out["result"]["status"], "V2_SOURCE_PROMOTED_NO_RESTART")
+            scoped.assert_called_once()
+            strict.assert_not_called()
+
     def test_private_and_unknown_files_rejected(self):
         for name in (".env", "../bot.py", "secrets.py", "/etc/passwd"):
             with self.assertRaises(ValueError):
