@@ -204,6 +204,35 @@ def main():
         fail("module integrity hash mismatch")
     compile(module_bytes, str(MODULE), "exec")
 
+    # Fail BEFORE touching the authenticated MCP service or creating a backup.
+    # The test runs in a disposable directory; local bridge imports stay readonly.
+    canary = (
+        "from mcp_server import _tools, _tool_payload\n"
+        "assert len([x for x in _tools() if x['name']=='vps_bot_trader_v2']) == 1\n"
+        "for payload in ({'action':'shell'}, {'action':'service_stop','command':'kill -9 1'}):\n"
+        "  try: _tool_payload('vps_bot_trader_v2', payload)\n"
+        "  except ValueError: pass\n"
+        "  else: raise AssertionError('unsafe arguments accepted')\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="luk-bot-v2-preflight-") as folder:
+        test_dir = Path(folder)
+        (test_dir / "mcp_server.py").write_bytes(patch)
+        (test_dir / "luk_bot_v2_operator.py").write_bytes(module_bytes)
+        env = {"HOME": "/home/ubuntu", "PATH": "/usr/local/bin:/usr/bin:/bin",
+               "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C",
+               "PYTHONPATH": str(BRIDGE)}
+        result = run([sys.executable, "-B", "-c", canary], cwd=folder, env=env)
+        if result.returncode:
+            lines = result.stderr.splitlines()
+            last_line = lines[-1] if lines else "stderr_unavailable"
+            # Provide bounded diagnostic without echoing environment or command output.
+            import re as _re
+            last_line = _re.sub(
+                r"(?i)(bearer|token|secret|password|api[_-]?key)\\s*[:=]\\s*[^\\s]+",
+                r"\\1=[REDACTED]", last_line
+            )
+            fail("offline canary failed: " + last_line[:260])
+    print("OFFLINE_REGISTRATION_OK", flush=True)
     backups = BRIDGE / ".luk-terminal-backups"
     backups.mkdir(mode=0o700, exist_ok=True)
     os.chmod(backups, 0o700)
@@ -218,28 +247,6 @@ def main():
         changed = True
         atomic_write(MODULE, module_bytes)
         atomic_write(MCP, patch)
-        canary = (
-            "from mcp_server import _tools, _tool_payload\n"
-            "assert len([x for x in _tools() if x['name']=='vps_bot_trader_v2']) == 1\n"
-            "for payload in ({'action':'shell'}, {'action':'service_stop','command':'kill -9 1'}):\n"
-            "  try: _tool_payload('vps_bot_trader_v2', payload)\n"
-            "  except ValueError: pass\n"
-            "  else: raise AssertionError('unsafe arguments accepted')\n"
-        )
-        env = {"HOME": "/home/ubuntu", "PATH": "/usr/local/bin:/usr/bin:/bin",
-               "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C"}
-        result = run([sys.executable, "-B", "-c", canary], cwd=str(BRIDGE), env=env)
-        if result.returncode:
-            lines = result.stderr.splitlines()
-            last_line = lines[-1] if lines else "stderr_unavailable"
-            # Provide bounded diagnostic without echoing environment or command output.
-            import re as _re
-            last_line = _re.sub(
-                r"(?i)(bearer|token|secret|password|api[_-]?key)\\s*[:=]\\s*[^\\s]+",
-                r"\\1=[REDACTED]", last_line
-            )
-            fail("offline canary failed: " + last_line[:260])
-        print("OFFLINE_REGISTRATION_OK", flush=True)
         restart = run(["sudo", "-n", "systemctl", "restart", SERVICE])
         if restart.returncode:
             fail("MCP service restart failed")
