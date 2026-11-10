@@ -72,6 +72,10 @@ def _tool_payload(name, arguments):
         return _luk_operator_prior_payload(name, arguments)
     if type(arguments) is not dict or arguments.get("action") not in _luk_operator_actions:
         raise ValueError("invalid controlled operator request")
+    allowed = {"action", "confirmation", "file", "expected_pid",
+               "expected_start_ticks", "expected_sha256", "staged_sha256"}
+    if set(arguments) - allowed:
+        raise ValueError("unexpected controlled operator field")
     payload = _luk_operator_run(arguments["action"], arguments)
     return {"content": [{"type": "text", "text": _luk_operator_json.dumps(
         payload, ensure_ascii=False)}], "isError": False}
@@ -168,8 +172,8 @@ def main():
         fail("must run as ubuntu uid=1001 (without sudo)")
     if not BRIDGE.is_dir() or MCP.is_symlink() or MODULE.exists() or not MCP.is_file():
         fail("unexpected bridge layout or already installed")
-    if os.readlink("/proc/self/ns/pid") != os.readlink("/proc/self/ns/pid"):
-        fail("unexpected process namespace")  # self-consistency only, not attestation
+    # Do not attempt to assert host identity: access to /proc/1/ns/pid is
+    # restricted on this VPS. Operational writes use process + kernel-lock checks.
     verify_service()
     previous = MCP.read_bytes()
     patch = patch_mcp(previous.decode("utf-8"))
