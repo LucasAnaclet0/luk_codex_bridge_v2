@@ -647,6 +647,32 @@ def run(args: dict) -> dict:
         raise RuntimeError("expected ubuntu uid 1001")
     if ROOT.is_symlink() or BRIDGE.is_symlink() or DEV.is_symlink() or OPS.is_symlink():
         raise RuntimeError("symlink path refused")
+    # Read-only actions must not create directories, lock files or backups.
+    if action in ("status", "file_inventory", "source_read"):
+        if action == "status":
+            result = _status()
+        elif action == "file_inventory":
+            result = _inventory()
+        else:
+            start, count = args["start_line"], args["line_count"]
+            if type(start) is not int or type(count) is not int or start < 1 or count < 1 or count > 100:
+                raise ValueError("source excerpt bounds invalid")
+            content = _read(_safe_path(ROOT, args["file"], discovery_read=True))
+            lines = content.decode("utf-8").splitlines()
+            if start > len(lines):
+                raise ValueError("past end")
+            selected = lines[start - 1:start - 1 + count]
+            redacted = [("[REDACTED: credential-related source line]"
+                         if any(term in line.lower() for term in
+                                ("api_key", "apikey", "api_secret", "apisecret",
+                                 "password", "secret", "private_key", "token",
+                                 "authorization", "bearer")) else line)
+                        for line in selected]
+            result = {"status": "OK", "file": args["file"], "source_sha256": _hash(content),
+                      "total_lines": len(lines), "start_line": start,
+                      "excerpt": "\n".join(redacted), "read_only": True}
+        return {"action": action, "scope": "FIXED_BOT_V2_ONLY", "host_attested": False,
+                "main_v1_changed": False, "result": result}
     OPS.mkdir(mode=0o700, parents=False, exist_ok=True)
     BACKUP.mkdir(mode=0o700, exist_ok=True)
     os.chmod(OPS, 0o700)
