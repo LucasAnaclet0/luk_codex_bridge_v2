@@ -23,6 +23,9 @@ class V2UpdaterSafetyTests(unittest.TestCase):
         with_v1 = original.replace(guard, v1.WRAPPER + "\n" + guard)
         combined = old_installer.patch_mcp(with_v1)
         self.mcp.write_bytes(combined)
+        for name in ("config.py", "database.py", "terminal_readonly.py",
+                     "luk_remote_operator_v1.py"):
+            (self.base / name).write_bytes((root / name).read_bytes())
         self.operator.write_text("dummy outdated operator")
         for key, value in {"BRIDGE": self.base, "MCP": self.mcp,
                            "OPERATOR": self.operator}.items():
