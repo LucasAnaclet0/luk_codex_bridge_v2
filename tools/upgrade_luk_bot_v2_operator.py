@@ -13,6 +13,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 
@@ -71,17 +72,30 @@ def verify_mcp_service():
         fail("MCP_SUDO_MISSING")
 
 
-def auth_heartbeat():
+def auth_heartbeat(retries=20):
+    """Poll 401 auth rejection: systemd 'restart' can return before HTTP is ready.
+
+    Do not bypass authentication or use a bearer token. Fail closed when no
+    consistent protected MCP endpoint responds within the bounded window.
+    """
     sys.path.insert(0, str(BRIDGE))
     from config import MCP_PORT
-    try:
-        request = urllib.request.Request("http://127.0.0.1:%d/mcp" % MCP_PORT)
-        urllib.request.urlopen(request, timeout=3).close()
-        return False
-    except urllib.error.HTTPError as exc:
-        return exc.code == 401
-    except (OSError, TimeoutError):
-        return False
+    if type(retries) is not int or retries < 1 or retries > 30:
+        raise ValueError("invalid heartbeat retries")
+    for i in range(retries):
+        try:
+            request = urllib.request.Request("http://127.0.0.1:%d/mcp" % MCP_PORT)
+            urllib.request.urlopen(request, timeout=2).close()
+            return False  # Unauthenticated access must never succeed.
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                return True
+            # An exposed 403/404/405/etc is NOT proof of a healthy MCP.
+            return False
+        except (OSError, TimeoutError):
+            if i < retries - 1:
+                time.sleep(1)
+    return False
 
 
 def canary(new_module):
@@ -156,7 +170,9 @@ def main():
         changed = True
         cp = command(["/usr/bin/sudo", "-n", "/usr/bin/systemctl",
                       "restart", SERVICE])
-        if cp.returncode or not auth_heartbeat():
+        if cp.returncode:
+            fail("MCP_SYSTEMCTL_RESTART_FAILED")
+        if not auth_heartbeat():
             fail("MCP_POST_UPDATE_HEARTBEAT_FAILED")
         print("V2_OPERATOR_UPDATED=true", flush=True)
         print("MCP_AUTH_HEARTBEAT_OK", flush=True)
