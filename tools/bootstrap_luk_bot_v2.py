@@ -216,7 +216,15 @@ def main():
                "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C"}
         result = run([sys.executable, "-B", "-c", canary], cwd=str(BRIDGE), env=env)
         if result.returncode:
-            fail("offline canary failed")
+            lines = result.stderr.splitlines()
+            last_line = lines[-1] if lines else "stderr_unavailable"
+            # Provide bounded diagnostic without echoing environment or command output.
+            import re as _re
+            last_line = _re.sub(
+                r"(?i)(bearer|token|secret|password|api[_-]?key)\\s*[:=]\\s*[^\\s]+",
+                r"\\1=[REDACTED]", last_line
+            )
+            fail("offline canary failed: " + last_line[:260])
         print("OFFLINE_REGISTRATION_OK", flush=True)
         restart = run(["sudo", "-n", "systemctl", "restart", SERVICE])
         if restart.returncode:
