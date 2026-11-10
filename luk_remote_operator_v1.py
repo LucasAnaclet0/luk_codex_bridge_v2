@@ -21,6 +21,7 @@ import tempfile
 import time
 
 BOT = Path("/home/ubuntu/luk_bot_trader")
+CAMPAIGN_ROOT = Path("/home/ubuntu/luk_campaigns/campanha_100_20261108_230704_124781")
 BRIDGE = Path("/home/ubuntu/luk_codex_bridge_v2")
 DEV = BRIDGE / ".luk-main-dev-staging"
 STATE = BRIDGE / ".luk-controlled-ops"
@@ -97,6 +98,28 @@ def _main_processes() -> list[dict]:
     return sorted(found, key=lambda x: x["pid"])
 
 
+def _campaign_processes() -> list[int]:
+    found = []
+    try:
+        with os.scandir("/proc") as entries:
+            for entry in entries:
+                if not entry.name.isdecimal():
+                    continue
+                proc = Path("/proc") / entry.name
+                try:
+                    argv = (proc / "cmdline").read_bytes().split(b"\\x00")
+                    if not any(x == b"main.py" or x.endswith(b"/main.py") for x in argv):
+                        continue
+                    cwd = os.readlink(proc / "cwd")
+                    if cwd.startswith(str(CAMPAIGN_ROOT) + "/"):
+                        found.append(int(entry.name))
+                except (OSError, ValueError):
+                    continue
+    except OSError:
+        raise RuntimeError("cannot inspect campaign processes") from None
+    return found
+
+
 def _flock_owned(pid: int) -> bool:
     """Require a kernel FLOCK report for the exact expected process."""
     try:
@@ -140,6 +163,7 @@ def _status() -> dict:
     return {
         "main_processes": [{**p, "kernel_flock_confirmed": _flock_owned(p["pid"])} for p in procs[:4]],
         "main_count": len(procs),
+        "campaign_process_count": len(_campaign_processes()),
         "demo_flags_verified": bool(flag1 and flag2),
         "main_binary_present": PYTHON.is_file() and not PYTHON.is_symlink(),
         "host_attested": False,
@@ -231,10 +255,20 @@ def _stop_main(args: dict) -> dict:
 
 def _start_main() -> dict:
     _check_stopped()
+    if _campaign_processes():
+        raise RuntimeError("NO_GO: campaign process active; refusing concurrent MAIN start")
     if not all(_load_nonsecret_flags()):
         raise RuntimeError("NO_GO: DEMO flags not explicitly set true in main .env")
     if not (BOT / "demo_execution.py").is_file():
         raise RuntimeError("NO_GO: demo_execution.py unavailable")
+    try:
+        trading = _read(BOT / "trading.py").decode("utf-8")
+    except (OSError, ValueError, UnicodeError):
+        raise RuntimeError("NO_GO: cannot inspect trading.py") from None
+    if not all(x in trading for x in (
+            "exchange.set_sandbox_mode(True)", "assert_demo(exchange)",
+            "cfg.USAR_TESTNET is not True")):
+        raise RuntimeError("NO_GO: mandatory OKX DEMO guards absent in trading.py")
     logdir = BOT / "logs"
     if not logdir.is_dir() or logdir.is_symlink():
         raise RuntimeError("NO_GO: logs directory unavailable")
