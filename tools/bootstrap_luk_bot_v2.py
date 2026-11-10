@@ -25,8 +25,8 @@ MODULE = BRIDGE / "luk_bot_v2_operator.py"
 SERVICE = "luk-codex-mcp.service"
 MARKER = "# LUK_BOT_TRADER_V2_PLUGIN"
 URL = ("https://raw.githubusercontent.com/LucasAnaclet0/luk_codex_bridge_v2/"
-       "c99502db7201690e1bb17e3c9874d7018f2f35f8/luk_bot_v2_operator.py")
-EXPECTED_BLOB = "be6807f6f939cdc5c6b5fe85e89634c06c397ad0"
+       "44beb8a6cd70c94219f9660f173c867bdb2c0132/luk_bot_v2_operator.py")
+EXPECTED_BLOB = "8f9f0ed6f8e768be3aeecb730e472e39314b255d"
 
 WRAPPER = """
 # LUK_BOT_TRADER_V2_PLUGIN
