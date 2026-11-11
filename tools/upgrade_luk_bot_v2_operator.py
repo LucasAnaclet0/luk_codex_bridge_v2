@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -180,6 +181,21 @@ def main():
         print("V2_BOT_SERVICE_RESTARTED=false", flush=True)
         print("V2_TRADES_EXECUTED=false", flush=True)
         print("HOST_ATTESTED=false", flush=True)
+        # Optional best-effort read-only audit; this cannot roll back a working MCP.
+        # Only the fixed, whitelisted V2 audit action is invoked (GET only).
+        try:
+            import importlib
+            operator = importlib.import_module("luk_bot_v2_operator")
+            audit = operator.run({"action": "exchange_audit_readonly"})
+            result = audit.get("result", {})
+            if isinstance(result, dict):
+                print("V2_EXCHANGE_AUDIT_READONLY=" +
+                      json.dumps(result, ensure_ascii=True, sort_keys=True), flush=True)
+            else:
+                print("V2_EXCHANGE_AUDIT_READONLY=UNVERIFIED", flush=True)
+        except Exception as exc:
+            print("V2_EXCHANGE_AUDIT_READONLY=UNVERIFIED_" +
+                  type(exc).__name__[:40], flush=True)
         print("NEXT_STEP=refresh ChatGPT plugin tools", flush=True)
     except Exception:
         if changed:
