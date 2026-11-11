@@ -1,0 +1,29 @@
+[Unit]
+Description=LUK Autopilot V2 - read-only VPS and OKX Demo health monitoring
+After=network-online.target luk-codex-mcp.service luk-bot-trader-v2.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/luk_codex_bridge_v2/luk_autopilot_v2
+ExecStart=/usr/bin/python3 -B -u /home/ubuntu/luk_codex_bridge_v2/luk_autopilot_v2/monitor.py --daemon
+Restart=on-failure
+RestartSec=20
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+MemoryMax=256M
+Environment=HOME=/home/ubuntu
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=multi-user.target
