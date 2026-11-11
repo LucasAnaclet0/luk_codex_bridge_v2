@@ -21,6 +21,22 @@ class Tests(unittest.TestCase):
   self.assertEqual(jobs.summary()['counts'],{'done':1})
   self.assertFalse(jobs.summary()['auto_trading'])
   self.assertEqual(jobs.one(),None)
+ def test_isolation_job_preserves_no_auto_codex(self):
+  fake=self.fake_health()
+  fake['database'].update({'integrity':'ok','quarantined_count':3})
+  fake['services']={n:{'active':True} for n in ('trade','bridge','telegram_menu','notifier')}
+  verified={'result':'SANDBOX_ISOLATION_VERIFIED','host_home':'not_mounted',
+            'network':'namespace_disabled'}
+  with patch.object(jobs.monitor,'snapshot',return_value=fake),patch(
+      'safe_envelope.write_envelope',return_value=self.path/'test.json'),patch(
+      'isolated_runner.verify',return_value=verified) as probe:
+   jobs.add('isolation')
+   done=jobs.one()
+  self.assertEqual(done['status'],'done')
+  self.assertEqual(jobs.summary()['recent'][0]['result']['isolation']['result'],
+                   'SANDBOX_ISOLATION_VERIFIED')
+  self.assertFalse(jobs.summary()['auto_codex'])
+  probe.assert_called_once()
  def test_invalid_job_rejected(self):
   with self.assertRaises(ValueError):jobs.add('exec arbitrary shell')
  def test_warning_pending_needs_review(self):

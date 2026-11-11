@@ -8,7 +8,7 @@ import intelligent
 BASE=Path(__file__).resolve().parent
 DB=BASE/'diagnostics.sqlite3'
 LOCK=BASE/'diagnostics.lock'
-TYPES=('health','campaign','triage')
+TYPES=('health','campaign','triage','isolation')
 def now():return datetime.now(timezone.utc).isoformat()
 def conn():
  if DB.is_symlink():raise RuntimeError('UNSAFE_QUEUE_PATH')
@@ -39,6 +39,17 @@ def report(kind):
   with sqlite3.connect('file:'+str(monitor.DB)+'?mode=ro',uri=True,timeout=5) as c:
    n,pnl,wins=c.execute('SELECT count(*),coalesce(sum(pnl),0),coalesce(sum(CASE WHEN pnl>0 THEN 1 ELSE 0 END),0) FROM closed_trades').fetchone()
   out.update({'closed':n,'target':100,'realized_pnl_usdt':round(pnl,5),'wins':wins})
+ if kind=='isolation':
+  from safe_envelope import envelope,write_envelope
+  from isolated_runner import verify
+  passed=verify(write_envelope(envelope(s)))
+  out['isolation']={
+   'result':passed['result'],
+   'host_home':passed['host_home'],
+   'network':passed['network'],
+   'no_trading':True,
+   'no_codex':True,
+  }
  if kind=='triage':
   out['recommendation']=('READ_ONLY_RECONCILIATION_NO_RETRY' if out['pending'] else
     'INSPECT_SERVICE_AND_LOGS' if s['errors'] else 'CONTINUE_MONITORING')
@@ -91,6 +102,7 @@ def daemon():
    try:
     scheduled('health',3600)
     scheduled('campaign',21600)
+    scheduled('isolation',21600)
     state=monitor.read_state()
     if state.get('severity') in ('WARNING','CRITICAL'):scheduled('triage',3600)
     decision=intelligent.tick(state)
