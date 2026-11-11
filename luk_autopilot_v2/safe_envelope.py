@@ -64,10 +64,62 @@ def envelope(snapshot):
         "codex_autonomous_authorized": False,
     }
 
+def validate_payload(value):
+    if not isinstance(value, dict):
+        raise ValueError("DIAGNOSTIC_SCHEMA_INVALID")
+    keys = {
+        "schema", "generated_utc", "mode", "severity", "error_codes",
+        "unknown_error_count", "services_active", "db_integrity",
+        "pending_orders", "closed_trades", "open_positions",
+        "quarantined_count", "restricted_pair_count",
+        "network_authorized", "trading_authorized",
+        "codex_autonomous_authorized",
+    }
+    if set(value) != keys:
+        raise ValueError("DIAGNOSTIC_UNEXPECTED_FIELD")
+    if type(value["schema"]) is not int or value["schema"] != 1:
+        raise ValueError("DIAGNOSTIC_SCHEMA_MISMATCH")
+    try:
+        generated = datetime.fromisoformat(value["generated_utc"])
+        if generated.tzinfo is None:
+            raise ValueError("UNZONED_TIMESTAMP")
+    except (TypeError, ValueError):
+        raise ValueError("DIAGNOSTIC_TIMESTAMP_INVALID") from None
+    if value["mode"] != "OFFLINE_ISOLATED_DIAGNOSIS_ONLY":
+        raise ValueError("DIAGNOSTIC_MODE_INVALID")
+    if value["severity"] not in SEVERITIES:
+        raise ValueError("DIAGNOSTIC_SEVERITY_INVALID")
+    errors = value["error_codes"]
+    if (not isinstance(errors, list) or any(type(x) is not str or x not in CODES for x in errors)
+            or errors != sorted(set(errors))):
+        raise ValueError("DIAGNOSTIC_CODES_INVALID")
+    services = value["services_active"]
+    if (not isinstance(services, dict)
+            or set(services) != {"trade", "bridge", "telegram_menu", "notifier"}
+            or any(type(x) is not bool for x in services.values())):
+        raise ValueError("DIAGNOSTIC_SERVICE_INVALID")
+    if value["db_integrity"] not in ("ok", "unverified"):
+        raise ValueError("DIAGNOSTIC_DB_INVALID")
+    for key in ("unknown_error_count", "pending_orders", "closed_trades",
+                "open_positions", "quarantined_count", "restricted_pair_count"):
+        bounded_count(value[key])
+    for key in ("network_authorized", "trading_authorized", "codex_autonomous_authorized"):
+        if value[key] is not False:
+            raise ValueError("DIAGNOSTIC_PRIVILEGE_VIOLATION")
+    return value
+
 def write_envelope(payload, target=FILE):
+    validate_payload(payload)
     target = Path(target)
     directory = target.parent
-    if directory.is_symlink() or target.is_symlink():
+    ancestor = directory
+    while True:
+        if ancestor.is_symlink():
+            raise RuntimeError("UNSAFE_SANDBOX_ANCESTOR")
+        if ancestor == ancestor.parent:
+            break
+        ancestor = ancestor.parent
+    if target.is_symlink():
         raise RuntimeError("UNSAFE_SANDBOX_PATH")
     directory.mkdir(mode=0o700, exist_ok=True)
     os.chmod(directory, 0o700)
@@ -82,6 +134,11 @@ def write_envelope(payload, target=FILE):
             f.flush()
             os.fsync(f.fileno())
         os.replace(temporary, target)
+        descriptor = os.open(str(directory), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)

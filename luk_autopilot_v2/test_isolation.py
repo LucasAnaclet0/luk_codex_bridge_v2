@@ -72,7 +72,7 @@ class TestIsolation(unittest.TestCase):
         link = self.root / "link.json"
         link.symlink_to(private)
         with self.assertRaises(RuntimeError):
-            safe_envelope.write_envelope({"schema": 1}, link)
+            safe_envelope.write_envelope(safe_envelope.envelope(self.snapshot), link)
         self.assertEqual(private.read_text(), "SECRET")
 
     def test_bwrap_command_has_no_network_or_host_home(self):
@@ -91,6 +91,33 @@ class TestIsolation(unittest.TestCase):
         self.assertNotIn("/home/ubuntu/luk_bot_trader_v2", argv)
         self.assertNotIn("--bind", argv)
 
+    def test_strict_contract_rejects_extra_secret_field(self):
+        data = safe_envelope.envelope(self.snapshot)
+        data['password'] = 'TOP_SECRET'
+        with self.assertRaises(ValueError):
+            safe_envelope.write_envelope(data, self.root / 'bad.json')
+        self.assertFalse((self.root / 'bad.json').exists())
+
+    def test_result_rejects_bool_as_number_and_hash_mismatch(self):
+        expected = {'severity': 'OK', 'hash': 'a' * 64}
+        values = {
+            'result': 'SANDBOX_ISOLATION_VERIFIED',
+            'network': 'namespace_disabled',
+            'host_home': 'not_mounted',
+            'host_etc': 'not_mounted',
+            'source': 'explicit_read_only_snapshot',
+            'autonomous_code_execution': 0,
+            'codex_enabled': False,
+            'severity': 'OK',
+            'snapshot_sha256': 'a' * 64,
+        }
+        with self.assertRaises(RuntimeError):
+            isolated_runner.validate_result(json.dumps(values), expected)
+        values['autonomous_code_execution'] = False
+        values['snapshot_sha256'] = 'b' * 64
+        with self.assertRaises(RuntimeError):
+            isolated_runner.validate_result(json.dumps(values), expected)
+
     def test_actual_isolated_process(self):
         path = safe_envelope.write_envelope(
             safe_envelope.envelope(self.snapshot),
@@ -98,12 +125,9 @@ class TestIsolation(unittest.TestCase):
         )
         if not Path("/usr/bin/bwrap").is_file():
             self.skipTest("bubblewrap not installed in this environment")
-        try:
-            result = isolated_runner.verify(path)
-        except RuntimeError as e:
-            if os.environ.get("CI"):
-                self.skipTest("CI runner restricts user namespaces")
-            raise
+        if os.environ.get("CI"):
+            self.skipTest("Actual namespace attestation is performed on VPS, not CI")
+        result = isolated_runner.verify(path)
         self.assertEqual(result["result"], "SANDBOX_ISOLATION_VERIFIED")
         self.assertEqual(result["severity"], "CRITICAL")
         self.assertFalse(result["codex_enabled"])

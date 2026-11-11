@@ -40,9 +40,8 @@ def report(kind):
    n,pnl,wins=c.execute('SELECT count(*),coalesce(sum(pnl),0),coalesce(sum(CASE WHEN pnl>0 THEN 1 ELSE 0 END),0) FROM closed_trades').fetchone()
   out.update({'closed':n,'target':100,'realized_pnl_usdt':round(pnl,5),'wins':wins})
  if kind=='isolation':
-  from safe_envelope import envelope,write_envelope
-  from isolated_runner import verify
-  passed=verify(write_envelope(envelope(s)))
+  from isolated_runner import snapshot_proof
+  passed=snapshot_proof(s)
   out['isolation']={
    'result':passed['result'],
    'host_home':passed['host_home'],
@@ -105,9 +104,11 @@ def daemon():
     scheduled('isolation',21600)
     state=monitor.read_state()
     if state.get('severity') in ('WARNING','CRITICAL'):scheduled('triage',3600)
-    decision=intelligent.tick(state)
-    if decision.get('status') in ('CODEX_DIAGNOSIS_QUEUED','SUBMISSION_UNCERTAIN_NO_RETRY'):
-     print('AUTOPILOT_CODEX_GATE',json.dumps(decision),flush=True)
+    # An independent security review has NOT approved automated model access.
+    if intelligent.AUTOMATIC_CODEX_ENABLED:
+     decision=intelligent.tick(state)
+     if decision.get('status') in ('CODEX_DIAGNOSIS_QUEUED','SUBMISSION_UNCERTAIN_NO_RETRY'):
+      print('AUTOPILOT_CODEX_GATE',json.dumps(decision),flush=True)
     for _ in range(12):
      if one() is None:break
    except Exception as exc:

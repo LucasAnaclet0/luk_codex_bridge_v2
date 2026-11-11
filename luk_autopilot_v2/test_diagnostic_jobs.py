@@ -28,8 +28,7 @@ class Tests(unittest.TestCase):
   verified={'result':'SANDBOX_ISOLATION_VERIFIED','host_home':'not_mounted',
             'network':'namespace_disabled'}
   with patch.object(jobs.monitor,'snapshot',return_value=fake),patch(
-      'safe_envelope.write_envelope',return_value=self.path/'test.json'),patch(
-      'isolated_runner.verify',return_value=verified) as probe:
+      'isolated_runner.snapshot_proof',return_value=verified) as probe:
    jobs.add('isolation')
    done=jobs.one()
   self.assertEqual(done['status'],'done')
@@ -37,6 +36,14 @@ class Tests(unittest.TestCase):
                    'SANDBOX_ISOLATION_VERIFIED')
   self.assertFalse(jobs.summary()['auto_codex'])
   probe.assert_called_once()
+ def test_isolation_failure_is_uncertain_without_retries(self):
+  with patch.object(jobs.monitor,'snapshot',side_effect=self.fake_health),patch(
+      'isolated_runner.snapshot_proof',side_effect=RuntimeError('namespace_unavailable')):
+   jobs.add('isolation')
+   r=jobs.one()
+  self.assertEqual(r['status'],'uncertain')
+  self.assertIsNone(jobs.one())
+  self.assertEqual(jobs.summary()['counts']['uncertain'],1)
  def test_invalid_job_rejected(self):
   with self.assertRaises(ValueError):jobs.add('exec arbitrary shell')
  def test_warning_pending_needs_review(self):
