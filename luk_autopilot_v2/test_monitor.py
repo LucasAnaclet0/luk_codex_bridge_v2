@@ -61,7 +61,7 @@ class MonitorTests(unittest.TestCase):
   from datetime import datetime,timezone
   at=datetime.now(timezone.utc).isoformat()
   with sqlite3.connect(self.db) as c:
-   c.execute("INSERT INTO orders VALUES ('PREPARED',?)",(at,))
+   c.execute("INSERT INTO orders VALUES ('PREPARED',)",(at,))
   active={'active':True,'pid':4,'status':'running'}
   with patch.object(ap,'service_state',return_value=active),patch.object(
       ap,'inspect_logs',return_value={'cycle_age_seconds':10,'recent_errors':0}):
@@ -81,6 +81,16 @@ class MonitorTests(unittest.TestCase):
    after=ap.snapshot()
   self.assertIn('OKX_NEW_RESTRICTED_PAIRS:GRAM/USDT',initial['warnings'])
   self.assertNotIn('OKX_NEW_RESTRICTED_PAIRS:GRAM/USDT',after['warnings'])
+ def test_invalid_order_timestamp_is_critical_not_zero(self):
+  with sqlite3.connect(self.db) as c:
+   c.execute("INSERT INTO orders VALUES ('PREPARED','invalid-timestamp')")
+  active={'active':True,'pid':4,'status':'running'}
+  with patch.object(ap,'service_state',return_value=active),patch.object(
+      ap,'inspect_logs',return_value={'cycle_age_seconds':10,'recent_errors':0}):
+   r=ap.snapshot()
+  self.assertEqual(r['severity'],'CRITICAL')
+  self.assertIn('V2_UNRESOLVED_ORDERS_OLDER_10_MIN',r['errors'])
+  self.assertGreaterEqual(ap.age_utc('2026-01-01 10:00:00'),600)
  def test_pending_age_and_severity(self):
   with sqlite3.connect(self.db) as c:
    c.execute("INSERT INTO orders VALUES ('UNKNOWN','2026-01-01T00:00:00+00:00')")
