@@ -31,7 +31,7 @@ MAX_FILE = 500_000
 MAX_PATCH = 6_000
 ACTIONS = frozenset(("status", "file_inventory", "source_read", "dev_stage_patch",
                      "dev_verify", "service_stop", "service_start", "service_restart",
-                     "promote_dev", "rollback"))
+                     "promote_dev", "rollback", "exchange_audit_readonly"))
 CONFIRM = {
     "service_stop": "AUTORIZO_PARAR_BOT_V2_DEMO",
     "service_start": "AUTORIZO_INICIAR_BOT_V2_DEMO",
@@ -393,6 +393,208 @@ def _public_service_status(service: dict) -> dict:
     return public
 
 
+
+# This child runs only fixed, authenticated GETs against OKX DEMO. It never
+# sends orders, cancels orders, transfers funds, or changes the live SQLite DB.
+_EXCHANGE_READONLY_CHILD = r'''
+import json
+import logging
+import math
+from pathlib import Path
+import sqlite3
+from urllib.parse import urlsplit
+
+ROOT = Path("/home/ubuntu/luk_bot_trader_v2")
+DB = ROOT / "data" / "v2_okx_demo.sqlite3"
+
+
+def safe_number(raw):
+    try:
+        v = float(raw)
+        return round(v, 9) if math.isfinite(v) and v >= 0 else None
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def main():
+    # Immutable read explicitly refuses active WAL, avoiding false order absence.
+    if not DB.is_file() or DB.is_symlink():
+        return {"status": "UNVERIFIED", "reason": "V2_DATABASE_UNAVAILABLE"}
+    for suffix in ("-wal", "-shm"):
+        p = DB.with_name(DB.name + suffix)
+        if p.exists() and (p.is_symlink() or p.stat().st_size):
+            return {"status": "UNVERIFIED", "reason": "SQLITE_ACTIVE_WAL"}
+    original_stat = DB.stat()
+    conn = sqlite3.connect(DB.as_uri() + "?mode=ro&immutable=1",
+                           uri=True, timeout=2)
+    try:
+        conn.execute("PRAGMA query_only=ON")
+        if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+            return {"status": "UNVERIFIED", "reason": "SQLITE_QUICK_CHECK_FAILED"}
+        rows = conn.execute(
+            "SELECT cid,symbol,side,status FROM orders "
+            "WHERE status IN ('PREPARED','UNKNOWN','OPEN')"
+        ).fetchall()
+        positions = conn.execute("SELECT symbol,qty FROM positions").fetchall()
+    finally:
+        conn.close()
+    if len(rows) > 25 or len(positions) > 25:
+        return {"status": "UNVERIFIED", "reason": "LEDGER_BOUNDS_EXCEEDED"}
+    pending_inj = [r for r in rows
+                   if r[1] == "INJ/USDT" and r[2] == "buy"]
+    if len(pending_inj) > 1:
+        return {"status": "UNVERIFIED", "reason": "INJ_DUPLICATE_PENDING"}
+    position_map = {str(sym): safe_number(qty) for sym, qty in positions}
+    if any(qty is None for qty in position_map.values()):
+        return {"status": "UNVERIFIED", "reason": "LEDGER_POSITION_INVALID"}
+    # Only import the sanctioned V2 constructor: no daemon main or DB ledger.
+    logging.disable(logging.CRITICAL)
+    from v2.demo import make_exchange, assert_demo
+    ex = make_exchange()
+    try:
+        assert_demo(ex)
+        if getattr(ex, "id", "") != "okx":
+            return {"status": "UNVERIFIED", "reason": "NOT_OKX"}
+        if hasattr(ex, "session"):
+            ex.session.max_redirects = 0
+        allowed = {"/api/v5/trade/order", "/api/v5/account/balance"}
+        original_fetch = ex.fetch
+        observed_requests = []
+
+        def get_only(url, method="GET", headers=None, body=None):
+            parsed = urlsplit(url)
+            if (str(method).upper() != "GET" or
+                    parsed.scheme != "https" or
+                    parsed.hostname not in ("www.okx.com", "okx.com") or
+                    parsed.port not in (None, 443) or
+                    parsed.username is not None or parsed.password is not None or
+                    parsed.path not in allowed):
+                raise RuntimeError("NON_ALLOWED_READONLY_REQUEST")
+            observed_requests.append(parsed.path)
+            if len(observed_requests) > 3:
+                raise RuntimeError("READONLY_REQUEST_LIMIT")
+            return original_fetch(url, method, headers, body)
+
+        ex.fetch = get_only
+        report = {"status": "UNVERIFIED", "mode": "OKX_DEMO_SPOT_GET_ONLY",
+                  "pending_inj": len(pending_inj),
+                  "positions_count": len(positions),
+                  "order_inj": "NO_PENDING" if not pending_inj else "UNVERIFIED",
+                  "sol_balance": "UNVERIFIED"}
+        if pending_inj:
+            cid, symbol, side, state = pending_inj[0]
+            try:
+                raw = ex.private_get_trade_order({"instId": "INJ-USDT",
+                                                  "clOrdId": cid})
+                data = raw.get("data", []) if isinstance(raw, dict) else []
+                matching = [v for v in data if isinstance(v, dict)
+                            and v.get("clOrdId") == cid
+                            and v.get("instId") == "INJ-USDT"
+                            and v.get("side") == "buy"
+                            and v.get("ordId")]
+                if str(raw.get("code")) != "0" or len(matching) != 1:
+                    report["order_inj"] = "NOT_POSITIVELY_CONFIRMED"
+                else:
+                    state = str(matching[0].get("state") or "UNKNOWN").lower()
+                    filled_qty = safe_number(matching[0].get("accFillSz"))
+                    if state == "filled" and filled_qty and filled_qty > 0:
+                        report["order_inj"] = "CONFIRMED_FILLED"
+                        report["inj_filled_qty"] = filled_qty
+                    elif state in ("canceled", "cancelled") and filled_qty == 0:
+                        report["order_inj"] = "CONFIRMED_CANCELED_ZERO_FILL"
+                    elif state in ("live", "partially_filled", "partially-filled"):
+                        report["order_inj"] = "EXCHANGE_ORDER_STILL_OPEN"
+                    else:
+                        report["order_inj"] = "ORDER_STATE_UNVERIFIED"
+            except Exception as exc:
+                report["order_inj"] = "QUERY_FAILED"
+                report["inj_exception_class"] = type(exc).__name__[:50]
+        try:
+            raw = ex.private_get_account_balance({})
+            if isinstance(raw, dict) and str(raw.get("code")) == "0":
+                data = raw.get("data") or []
+                rows = (data[0].get("details") or []) if data and isinstance(data[0], dict) else []
+                sol = [r for r in rows if isinstance(r, dict) and r.get("ccy") == "SOL"]
+                if len(sol) <= 1:
+                    balance = sol[0] if sol else {}
+                    free = safe_number(balance.get("availBal") or 0)
+                    frozen = safe_number(balance.get("frozenBal") or 0)
+                    owned = position_map.get("SOL/USDT")
+                    if free is not None and frozen is not None and owned is not None:
+                        report.update({"sol_balance": "OBSERVED",
+                                       "sol_free": free, "sol_frozen": frozen,
+                                       "sol_ledger_qty": owned,
+                                       "sol_free_covers_ledger": free + 1e-10 >= owned,
+                                       "sol_total_covers_ledger": free+frozen+1e-10>=owned,
+                                       "ownership_proven": False})
+            else:
+                report["sol_balance"] = "QUERY_NOT_CONFIRMED"
+        except Exception as exc:
+            report["sol_balance"] = "QUERY_FAILED"
+            report["balance_exception_class"] = type(exc).__name__[:50]
+        after = DB.stat()
+        if (original_stat.st_size != after.st_size or
+                original_stat.st_mtime_ns != after.st_mtime_ns):
+            return {"status": "UNVERIFIED", "reason": "SQLITE_CHANGED_DURING_AUDIT"}
+        report["get_requests_only"] = all(p in allowed for p in observed_requests)
+        report["get_requests_count"] = len(observed_requests)
+        report["status"] = "READONLY_AUDIT_COMPLETED"
+        return report
+    finally:
+        try:
+            ex.close()
+        except Exception:
+            pass
+
+
+try:
+    print(json.dumps(main(), separators=(",", ":"), ensure_ascii=True))
+except Exception as exc:
+    print(json.dumps({"status": "UNVERIFIED",
+                      "reason": "READONLY_AUDIT_FAILED",
+                      "exception_class": type(exc).__name__[:50]}))
+'''
+
+
+def _exchange_audit_readonly() -> dict:
+    """Fixed read-only authenticated audit. Never return raw child stdout/stderr."""
+    try:
+        service, processes = _service_identity()
+    except (RuntimeError, OSError):
+        return {"status": "NO_GO", "reason": "V2_SERVICE_IDENTITY_UNVERIFIED"}
+    if (service.get("ActiveState") != "active" or
+            not any(str(p["pid"]) == service.get("MainPID") and
+                    p.get("role") == "trade_demo" for p in processes) or
+            not _demo_policy_proof()):
+        return {"status": "NO_GO", "reason": "V2_DEMO_RUNTIME_IDENTITY_UNVERIFIED"}
+    cmd = ["/home/ubuntu/luk_bot_trader/venv/bin/python",
+           "-B", "-c", _EXCHANGE_READONLY_CHILD]
+    env = {"PATH": "/usr/local/bin:/usr/bin:/bin",
+           "LANG": "C", "HOME": "/home/ubuntu",
+           "PYTHONDONTWRITEBYTECODE": "1",
+           "LUK_V2_DEMO_APPROVED": "I_APPROVE_OKX_DEMO_ONLY"}
+    try:
+        p = subprocess.run(cmd, cwd=str(ROOT), env=env, text=True,
+                           capture_output=True, timeout=45)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"status": "UNVERIFIED", "reason": "READONLY_CHILD_UNAVAILABLE"}
+    if p.returncode or len(p.stdout) > 3000:
+        return {"status": "UNVERIFIED", "reason": "READONLY_CHILD_FAILED"}
+    try:
+        item = json.loads(p.stdout)
+    except (ValueError, TypeError):
+        return {"status": "UNVERIFIED", "reason": "READONLY_CHILD_INVALID_RESPONSE"}
+    if type(item) is not dict:
+        return {"status": "UNVERIFIED", "reason": "READONLY_CHILD_INVALID_SHAPE"}
+    fields = {"status", "reason", "mode", "pending_inj", "positions_count",
+              "order_inj", "inj_filled_qty", "sol_balance", "sol_free",
+              "sol_frozen", "sol_ledger_qty", "sol_free_covers_ledger",
+              "sol_total_covers_ledger", "ownership_proven", "get_requests_only",
+              "get_requests_count", "inj_exception_class",
+              "balance_exception_class", "exception_class"}
+    return {k: item[k] for k in fields if k in item}
+
+
 def _status() -> dict:
     service = _service()
     return {
@@ -688,6 +890,7 @@ def run(args: dict) -> dict:
     shapes = {
         "status": {"action"},
         "file_inventory": {"action"},
+        "exchange_audit_readonly": {"action"},
         "source_read": {"action", "file", "start_line", "line_count"},
         "dev_stage_patch": {"action", "file", "old_text", "new_text", "expected_sha256"},
         "dev_verify": {"action", "file"},
@@ -706,11 +909,13 @@ def run(args: dict) -> dict:
     if ROOT.is_symlink() or BRIDGE.is_symlink() or DEV.is_symlink() or OPS.is_symlink():
         raise RuntimeError("symlink path refused")
     # Read-only actions must not create directories, lock files or backups.
-    if action in ("status", "file_inventory", "source_read"):
+    if action in ("status", "file_inventory", "source_read", "exchange_audit_readonly"):
         if action == "status":
             result = _status()
         elif action == "file_inventory":
             result = _inventory()
+        elif action == "exchange_audit_readonly":
+            result = _exchange_audit_readonly()
         else:
             start, count = args["start_line"], args["line_count"]
             if type(start) is not int or type(count) is not int or start < 1 or count < 1 or count > 100:
