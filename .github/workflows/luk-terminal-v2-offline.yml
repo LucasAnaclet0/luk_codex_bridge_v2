@@ -1,0 +1,35 @@
+name: LUK Terminal V2 offline safety checks
+
+on:
+  push:
+    branches:
+      - 'dev/luk-terminal-v2-shell-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: AST and isolated terminal unit tests (no VPS/OKX)
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          for name in (
+              "luk_vps_terminal.py",
+              "tools/install_luk_terminal_v2.py",
+              "tests/test_luk_bot_v2_terminal.py",
+          ):
+              ast.parse(Path(name).read_text(encoding="utf-8"), filename=name)
+          print("LUK_TERMINAL_AST_OK")
+          PY
+          python -m unittest discover -s tests -p 'test_luk_bot_v2_terminal.py' -v
+          sha256sum tools/install_luk_terminal_v2.py luk_vps_terminal.py
