@@ -122,8 +122,17 @@ def snapshot():
   database={'integrity':'UNVERIFIED'}
   errors.append('V2_DATABASE_UNVERIFIED:'+type(exc).__name__)
  else:
-  if database['pending_count'] and database['oldest_pending_age_seconds']>=600:
-   errors.append('V2_UNRESOLVED_ORDERS_OLDER_10_MIN')
+  if database['pending_count']:
+   if database['oldest_pending_age_seconds']>=600:
+    errors.append('V2_UNRESOLVED_ORDERS_OLDER_10_MIN')
+   else:
+    warnings.append('V2_ORDER_PENDING_EXCHANGE_CONFIRMATION')
+  previous=read_state()
+  old_pairs=set(previous.get('database',{}).get('restricted_pairs',[]))
+  new_pairs=set(database.get('restricted_pairs',[]))
+  added=new_pairs-old_pairs
+  if old_pairs and added:
+   warnings.append('OKX_NEW_RESTRICTED_PAIRS:'+','.join(sorted(added)))
   # Evidence-preserving quarantine is informational, not a new operational error.
   if database.get('exchange_restricted'):
    warnings.append('OKX_RESTRICTED_LOCATION_ALL_ORDER_SUBMISSIONS_BLOCKED')
