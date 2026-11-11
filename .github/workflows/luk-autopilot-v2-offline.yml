@@ -1,0 +1,26 @@
+name: LUK Autopilot V2 offline tests
+on:
+  push:
+    branches: ['dev/luk-autopilot-v2-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Syntax and pure offline health tests
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          for p in ('luk_autopilot_v2/monitor.py','luk_autopilot_v2/test_monitor.py'):
+              ast.parse(Path(p).read_text(encoding='utf-8'),filename=p)
+          print('AUTOPILOT_AST_OK')
+          PY
+          python -m unittest discover -s luk_autopilot_v2 -p test_monitor.py -v
