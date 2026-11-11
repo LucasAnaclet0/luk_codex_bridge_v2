@@ -29,3 +29,20 @@ The presence of INJ/USDT in `QUARANTINED` is an intentional WARNING, not proof t
 
 ## Next phase
 Introduce a durable job inbox with approval states, bounded runbooks for safe recoveries, dry-run tests, rollback, and optional Codex/API diagnostics. An IA workflow may propose actions, but high-impact actions need explicit authorization.
+
+
+## Phase 2 deployed (diagnostic queue, no automatic Codex yet)
+
+A separate durable SQLite job queue now runs as `diagnostic_jobs.py --daemon` inside the VPS `screen` session `luk_autopilot_v2_jobs`. Its state lives in `diagnostics.sqlite3`, independent of the trading SQLite ledger. The only accepted job types are `health`, `campaign`, and `triage`: each produces a read-only snapshot. `campaign` shows realized PnL, win count and 100-trade progress, explicitly excluding unrealized PnL. The daemon schedules a health check every hour, campaign review every six hours, and warning/critical triage no more than hourly. Jobs are bounded (max 12 pending/running), serialized by SQLite BEGIN IMMEDIATE, crash-interrupted work becomes `uncertain` with no automatic retry, and an exclusive flock prevents a second daemon. Manual `--once` cannot run alongside a daemon owner.
+
+Read-only CLI examples:
+```bash
+python -B diagnostic_jobs.py --status
+python -B diagnostic_jobs.py --enqueue health
+python -B diagnostic_jobs.py --enqueue campaign
+python -B diagnostic_jobs.py --enqueue triage
+```
+
+### Safety and remaining phases
+
+Neither the monitor nor the job daemon executes trades, repairs code, restarts services, or calls Codex/LLMs automatically. Codex audits may be invoked separately by the user-facing assistant; future API integration requires explicit approvals, usage quotas, and bounded actions. A screen process may terminate on VPS reboot; a persistent systemd deployment is still unimplemented. Telegram alerts are handled by the existing `monitor.py`, not by the diagnostic queue. Quarantined INJ and venue-restricted OP and GRAM are preserved in the Demo trading ledger. A healthy service does not imply a profitable strategy.
