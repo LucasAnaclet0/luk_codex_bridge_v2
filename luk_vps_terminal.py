@@ -1,8 +1,8 @@
-"""LUK Terminal V2: audited shell as ubuntu, no root escalation or token access.
+"""LUK Terminal V2: audited shell under ubuntu with no new privileges.
 
-A terminal run is user-approved and is NOT a security sandbox; commands can
-modify any resource writable by the MCP service account. Never advertise this
-as host attestation, unrestricted root, or a replacement for Linux permissions.
+Commands can access any file readable/writable by ubuntu, including secrets.
+Output redaction is best-effort, not a security boundary. This is NOT a
+filesystem sandbox, host attestation, or unrestricted root console.
 """
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ def run(args: dict) -> dict:
                 "max_timeout_seconds": MAX_TIMEOUT,
                 "shell": "/usr/bin/setpriv --no-new-privs /bin/bash --noprofile --norc -c",
                 "host_attested": False, "root_access": False,
-                "security_note": "Commands execute as ubuntu; no filesystem sandbox."}
+                "security_note": "Ubuntu shell with no-new-privs. Filesystem not sandboxed; may access sensitive local data. Output redaction best-effort."}
     command = args["command"]
     plan_sha = _plan_hash(command, cwd, timeout)
     if action == "plan":
