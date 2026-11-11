@@ -70,3 +70,14 @@ A one-time normal SSH session with root/sudo privileges is needed to enable the 
 python3 -B /home/ubuntu/luk_codex_bridge_v2/luk_autopilot_v2/monitor.py --status
 python3 -B /home/ubuntu/luk_codex_bridge_v2/luk_autopilot_v2/diagnostic_jobs.py --status
 ```
+
+
+## Final security gate — 2026-11-11
+
+The autonomous Codex task submission is now deliberately **DISABLED** (`AUTOMATIC_CODEX_ENABLED=False`). The latest independent review found that Codex CLI's `--sandbox read-only` blocks writes but does not prevent reading other user-owned files, including potentially sensitive local credentials, and cannot by itself exclude configured external MCP capabilities. A prompt is not a security boundary. Automatic critical-error analysis via Codex MUST remain off until a separate, attested and secret-isolated execution environment is available and tested.
+
+Installed and active: independent monitoring every 5 min, Telegram warning/critical alerts, durable local diagnostic queue, automated health/campaign reports, incident triage, fixed exchange restrictions, code backups and tests. Codex can still be invoked manually under the user's supervision. No production code patches/restarts/trades are performed by the Autopilot.
+
+Both detached `screen` services survive closing ChatGPT but not reboot. The prepared systemd files still need a one-time privileged installation, not possible through the bridge's `no-new-privs` Ubuntu terminal.
+
+Verified on VPS: 32 Autopilot tests and 17 Bridge worker tests passed. The GitHub CI must also pass before calling the repository release validated.
