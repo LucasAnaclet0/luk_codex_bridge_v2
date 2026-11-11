@@ -20,7 +20,7 @@ class GatewayTests(unittest.TestCase):
   self.report['errors']=[code]
   self.assertEqual(intelligent.tick(self.report)['status'],'OBSERVING_CRITICAL')
   with intelligent.connection() as c:
-   c.execute('UPDATE incidents SET first_seen=,last_seen=,observations=2',
+   c.execute('UPDATE incidents SET first_seen=?,last_seen=?,observations=2',
              ((datetime.now(timezone.utc)-timedelta(minutes=20)).isoformat(),
               (datetime.now(timezone.utc)-timedelta(minutes=2)).isoformat()))
   self.report['time_utc']=(datetime.now(timezone.utc)+timedelta(microseconds=10)).isoformat()
@@ -50,7 +50,7 @@ class GatewayTests(unittest.TestCase):
      (_ for _ in ()).throw(RuntimeError('network_failed')))['status'],
      'SUBMISSION_UNCERTAIN_NO_RETRY')
   with intelligent.connection() as c:
-   c.execute('UPDATE incidents SET claimed_at=',
+   c.execute('UPDATE incidents SET claimed_at=?',
       ((datetime.now(timezone.utc)-timedelta(days=3)).isoformat(),))
   self.report['time_utc']=datetime.now(timezone.utc).isoformat()
   self.assertEqual(intelligent.tick(self.report,submit=lambda _:self.fail('NO_RETRY'))['status'],

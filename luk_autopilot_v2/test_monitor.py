@@ -61,7 +61,7 @@ class MonitorTests(unittest.TestCase):
   from datetime import datetime,timezone
   at=datetime.now(timezone.utc).isoformat()
   with sqlite3.connect(self.db) as c:
-   c.execute("INSERT INTO orders VALUES ('PREPARED',)",(at,))
+   c.execute("INSERT INTO orders VALUES ('PREPARED',?)",(at,))
   active={'active':True,'pid':4,'status':'running'}
   with patch.object(ap,'service_state',return_value=active),patch.object(
       ap,'inspect_logs',return_value={'cycle_age_seconds':10,'recent_errors':0}):

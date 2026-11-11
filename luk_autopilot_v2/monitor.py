@@ -166,7 +166,7 @@ def alert_message(report):
          'Ocorrências: '+(', '.join(reasons) or 'nenhuma')+'\n'
          'Bot: '+('ativo' if report['services']['trade']['active'] else 'inativo')
          +' | Bridge: '+('ativa' if report['services']['bridge']['active'] else 'inativa')+'\n'
-         'Campanha: '+str(metrics.get('closed_trades',''))+'/100'
+         'Campanha: '+str(metrics.get('closed_trades','?'))+'/100'
          ' | Posições: '+str(metrics.get('positions','?'))+'\n'
          'Estado: '+str(STATE))
 

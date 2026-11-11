@@ -25,7 +25,7 @@ def add(kind):
   if c.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]>=12:
    raise RuntimeError('QUEUE_FULL')
   ident=uuid.uuid4().hex
-  c.execute('INSERT INTO jobs(id,kind,status,created) VALUES (?,,?,?)',(ident,kind,'queued',now()))
+  c.execute('INSERT INTO jobs(id,kind,status,created) VALUES (?,?,?,?)',(ident,kind,'queued',now()))
  return ident
 def report(kind):
  s=monitor.snapshot()
@@ -36,7 +36,7 @@ def report(kind):
       'closed':d.get('closed_trades'),'restricted_pairs':d.get('restricted_pairs',[]),
       'actions_executed':[],'codex_executed':False}
  if kind=='campaign':
-  with sqlite3.connect('file:'+str(monitor.DB)+'mode=ro',uri=True,timeout=5) as c:
+  with sqlite3.connect('file:'+str(monitor.DB)+'?mode=ro',uri=True,timeout=5) as c:
    n,pnl,wins=c.execute('SELECT count(*),coalesce(sum(pnl),0),coalesce(sum(CASE WHEN pnl>0 THEN 1 ELSE 0 END),0) FROM closed_trades').fetchone()
   out.update({'closed':n,'target':100,'realized_pnl_usdt':round(pnl,5),'wins':wins})
  if kind=='triage':
@@ -58,7 +58,7 @@ def one():
  except Exception as e:
   state='uncertain';result=json.dumps({'error_type':type(e).__name__,'no_auto_retry':True})
  with conn() as c:
-  c.execute("UPDATE jobs SET status=?,finished=?,result=? WHERE id= AND status='running'",(state,now(),result,ident))
+  c.execute("UPDATE jobs SET status=?,finished=?,result=? WHERE id=? AND status='running'",(state,now(),result,ident))
  return {'job_id':ident,'type':kind,'status':state}
 def summary():
  with conn() as c:
@@ -86,7 +86,7 @@ def daemon():
   fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
   os.chmod(LOCK,0o600)
   with conn() as c:
-   c.execute("UPDATE jobs SET status='uncertain',finished= WHERE status='running'",(now(),))
+   c.execute("UPDATE jobs SET status='uncertain',finished=? WHERE status='running'",(now(),))
   while True:
    try:
     scheduled('health',3600)

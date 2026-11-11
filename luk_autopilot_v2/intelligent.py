@@ -109,7 +109,7 @@ def submit_readonly_to_bridge(message):
    raise RuntimeError('BRIDGE_BUSY')
   now=datetime.now(timezone.utc).isoformat(timespec='seconds')
   c.execute("""INSERT INTO tasks(id,action,prompt,status,created_at,updated_at)
-               VALUES (?,'self_test',,'pending',,?)""",(ident,message,now,now))
+               VALUES (?,'self_test',?,'pending',?,?)""",(ident,message,now,now))
   c.commit()
  return ident
 
@@ -127,7 +127,7 @@ def tick(report,submit=None):
   existing=c.execute('SELECT * FROM incidents WHERE fingerprint=?',(fingerprint,)).fetchone()
   if existing is None:
    c.execute("""INSERT INTO incidents(fingerprint,first_seen,last_seen,observations,status,last_snapshot_at)
-                VALUES (?,?,,?,?,)""",(fingerprint,stamp(),stamp(),1,'observing',report['time_utc']))
+                VALUES (?,?,?,?,?,?)""",(fingerprint,stamp(),stamp(),1,'observing',report['time_utc']))
    return {'status':'OBSERVING_CRITICAL','observations':1}
   if existing['status'] in ('reserved',) or existing['status'].startswith('submission_uncertain'):
    return {'status':'UNVERIFIED_SUBMISSION_REQUIRES_MANUAL_RECONCILIATION'}
@@ -135,12 +135,12 @@ def tick(report,submit=None):
    return {'status':'COOLDOWN'}
   if existing['status']=='recovered':
    c.execute("""UPDATE incidents SET first_seen=?,last_seen=?,observations=1,
-                 status='observing',last_snapshot_at= WHERE fingerprint=?""",
+                 status='observing',last_snapshot_at=? WHERE fingerprint=?""",
              (stamp(),stamp(),report['time_utc'],fingerprint))
    return {'status':'OBSERVING_CRITICAL','observations':1}
   if report['time_utc']!=existing['last_snapshot_at']:
-   c.execute("""UPDATE incidents SET observations=observations+1,last_seen=?,last_snapshot_at=
-                WHERE fingerprint=""",(stamp(),report['time_utc'],fingerprint))
+   c.execute("""UPDATE incidents SET observations=observations+1,last_seen=?,last_snapshot_at=?
+                WHERE fingerprint=?""",(stamp(),report['time_utc'],fingerprint))
   else:
    return {'status':'REPEATED_SNAPSHOT_IGNORED'}
   if secs(existing['first_seen'])<MIN_AGE_SECONDS or existing['observations']<1:
@@ -148,14 +148,14 @@ def tick(report,submit=None):
   if existing['claimed_at'] and secs(existing['claimed_at'])<DAY_SECONDS:
    return {'status':'COOLDOWN'}
   day=when().date().isoformat()
-  used=c.execute('SELECT claims FROM daily_quota WHERE day_utc=',(day,)).fetchone()
+  used=c.execute('SELECT claims FROM daily_quota WHERE day_utc=?',(day,)).fetchone()
   if used and used['claims']>=DAY_CAP:return {'status':'DAILY_QUOTA_REACHED'}
   if not bridge_idle():return {'status':'BRIDGE_BUSY_OR_UNCERTAIN'}
   # Consume quota BEFORE contacting external queue. A crash safely burns quota,
   # never silently duplicates an AI task or retries a possibly submitted task.
-  c.execute("""INSERT INTO daily_quota(day_utc,claims) VALUES (,1)
+  c.execute("""INSERT INTO daily_quota(day_utc,claims) VALUES (?,1)
                ON CONFLICT(day_utc) DO UPDATE SET claims=claims+1""",(day,))
-  c.execute("""UPDATE incidents SET claimed_at=,status='reserved',last_seen=
+  c.execute("""UPDATE incidents SET claimed_at=?,status='reserved',last_seen=?
                WHERE fingerprint=?""",(stamp(),stamp(),fingerprint))
  try:
   if submit is None:task=submit_readonly_to_bridge(prompt(report,inc))
@@ -163,7 +163,7 @@ def tick(report,submit=None):
   if not isinstance(task,str) or len(task)!=32:raise RuntimeError('TASK_RESULT_UNVERIFIED')
  except Exception as exc:
   with connection() as c:
-   c.execute("UPDATE incidents SET status=? WHERE fingerprint=",
+   c.execute("UPDATE incidents SET status=? WHERE fingerprint=?",
              ('submission_uncertain_'+type(exc).__name__,fingerprint))
   return {'status':'SUBMISSION_UNCERTAIN_NO_RETRY'}
  with connection() as c:
