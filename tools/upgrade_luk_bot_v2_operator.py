@@ -22,10 +22,10 @@ BRIDGE = Path("/home/ubuntu/luk_codex_bridge_v2")
 MCP = BRIDGE / "mcp_server.py"
 OPERATOR = BRIDGE / "luk_bot_v2_operator.py"
 SERVICE = "luk-codex-mcp.service"
-OLD_BLOB = "63ef5bf87aa593eb9e9eba1407b854ff4ad67756"
-NEW_BLOB = "1574d0d48eb743dcdbdccb6e4388804efc24e7ff"
+OLD_BLOB = "1574d0d48eb743dcdbdccb6e4388804efc24e7ff"
+NEW_BLOB = "bf29a2388d0d9e5ed06001a1d981c87c48eec93d"
 URL = ("https://raw.githubusercontent.com/LucasAnaclet0/luk_codex_bridge_v2/"
-       "d942286b06857f9e497b17046063811ce9af9ecd/"
+       "576833992148c5749717702f7c14602b8a987878/"
        "luk_bot_v2_operator.py")
 
 
