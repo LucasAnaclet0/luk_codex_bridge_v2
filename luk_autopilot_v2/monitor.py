@@ -72,7 +72,12 @@ def inspect_db():
   closed=c.execute('SELECT count(*) FROM closed_trades').fetchone()[0]
   pending=c.execute("SELECT status,created_at FROM orders WHERE status IN ('PREPARED','OPEN','UNKNOWN')").fetchall()
   quarantine=c.execute("SELECT count(*) FROM orders WHERE status='QUARANTINED'").fetchone()[0]
+  control_exists=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_controls'").fetchone() is not None
+  restricted=(c.execute("SELECT value FROM runtime_controls WHERE name='exchange_restricted'").fetchone()
+              if control_exists else None)
+  exchange_restricted=restricted is not None and restricted[0]=='1'
  return {'orders':rows,'positions':positions,'closed_trades':closed,
+         'exchange_restricted':exchange_restricted,
          'pending_count':len(pending),'quarantined_count':quarantine,
          'oldest_pending_age_seconds':max((age_utc(ts) for _,ts in pending),default=0),
          'integrity':'ok'}
@@ -115,7 +120,11 @@ def snapshot():
  else:
   if database['pending_count'] and database['oldest_pending_age_seconds']>=600:
    errors.append('V2_UNRESOLVED_ORDERS_OLDER_10_MIN')
-  if database['quarantined_count']:warnings.append('V2_QUARANTINE_REVIEW_REQUIRED')
+  # Evidence-preserving quarantine is informational, not a new operational error.
+  if database.get('exchange_restricted'):
+   warnings.append('OKX_RESTRICTED_LOCATION_ALL_ORDER_SUBMISSIONS_BLOCKED')
+   if database.get('positions',0)>0:
+    errors.append('OPEN_POSITIONS_CANNOT_AUTO_EXIT_EXCHANGE_RESTRICTION')
  try:logs=inspect_logs()
  except (OSError,RuntimeError):
   logs={'cycle_age_seconds':None,'recent_errors':0}
