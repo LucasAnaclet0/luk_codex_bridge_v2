@@ -21,6 +21,7 @@ BRIDGE = Path("/home/ubuntu/luk_codex_bridge_v2")
 V2 = Path("/home/ubuntu/luk_bot_trader_v2")
 HOME = Path("/home/ubuntu")
 SHELL = Path("/bin/bash")
+NO_PRIVS = Path("/usr/bin/setpriv")
 AUDIT_DIR = BRIDGE / ".luk-terminal-v2"
 AUDIT_LOG = AUDIT_DIR / "execution_audit.jsonl"
 CWD_MAP = {"v2": V2, "bridge": BRIDGE, "home": HOME}
@@ -40,11 +41,11 @@ def _identity(cwd: str) -> Path:
         raise RuntimeError("NO_GO: expected unprivileged ubuntu uid 1001")
     if cwd not in CWD_MAP:
         raise ValueError("unsupported working-directory selector")
-    for location in (BRIDGE, V2, HOME, SHELL, CWD_MAP[cwd]):
+    for location in (BRIDGE, V2, HOME, SHELL, NO_PRIVS, CWD_MAP[cwd]):
         if location.is_symlink() or not location.exists():
             raise RuntimeError("NO_GO: fixed VPS location is missing or symlinked")
-    if not SHELL.is_file():
-        raise RuntimeError("NO_GO: fixed bash binary unavailable")
+    if not SHELL.is_file() or not NO_PRIVS.is_file():
+        raise RuntimeError("NO_GO: fixed nonprivileged shell launcher unavailable")
     return CWD_MAP[cwd]
 
 
@@ -126,7 +127,7 @@ def run(args: dict) -> dict:
     if action == "status":
         return {"status": "READY", "uid": os.getuid(), "cwd_selectors": sorted(CWD_MAP),
                 "max_timeout_seconds": MAX_TIMEOUT,
-                "shell": "/bin/bash --noprofile --norc -c",
+                "shell": "/usr/bin/setpriv --no-new-privs /bin/bash --noprofile --norc -c",
                 "host_attested": False, "root_access": False,
                 "security_note": "Commands execute as ubuntu; no filesystem sandbox."}
     command = args["command"]
@@ -146,7 +147,8 @@ def run(args: dict) -> dict:
                "PATH": "/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin",
                "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"}
         with tempfile.TemporaryFile() as stream:
-            process = subprocess.Popen([str(SHELL), "--noprofile", "--norc", "-c", command],
+            process = subprocess.Popen([str(NO_PRIVS), "--no-new-privs",
+                                       str(SHELL), "--noprofile", "--norc", "-c", command],
                                        cwd=str(workdir), env=env, stdin=subprocess.DEVNULL,
                                        stdout=stream, stderr=subprocess.STDOUT,
                                        start_new_session=True, close_fds=True)
