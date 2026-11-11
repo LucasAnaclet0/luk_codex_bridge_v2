@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-SCRIPT=Path('/home/ubuntu/luk_codex_bridge_v2/luk_autopilot_v2/monitor.py')
+SCRIPT=Path(__file__).with_name('monitor.py')
 spec=importlib.util.spec_from_file_location('luk_ap_monitor',SCRIPT)
 ap=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ap)
