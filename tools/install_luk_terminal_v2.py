@@ -23,9 +23,9 @@ MCP = BRIDGE / "mcp_server.py"
 TERMINAL = BRIDGE / "luk_vps_terminal.py"
 SERVICE = "luk-codex-mcp.service"
 MARKER = "# LUK_TERMINAL_V2_PLUGIN"
-PINNED_BLOB = "86f50c39c539f8d35bb2a45d750b65c931d069c2"
+PINNED_BLOB = "f3c671195d7cd4292a21aad8000234b14366ace2"
 MODULE_URL = ("https://raw.githubusercontent.com/LucasAnaclet0/"
-              "luk_codex_bridge_v2/1ec103c153e34c59024bc9f724c963528b87d576/"
+              "luk_codex_bridge_v2/35ab3e286399a44cb69eeb7efb17a32ecfa3cca2/"
               "luk_vps_terminal.py")
 
 HELPERS = '''
@@ -50,7 +50,7 @@ def _luk_term_tool_spec():
             "first and execute only with matching SHA256 plus explicit confirmation. "
             "Commands may read/write files and control services permitted by Linux; "
             "this is NOT a filesystem sandbox. Output is bounded/redacted. "
-            "No automatic host attestation or token disclosure."
+            "No host attestation; avoid printing secrets (redaction is best-effort)."
         ),
         "inputSchema": {
             "type": "object",
