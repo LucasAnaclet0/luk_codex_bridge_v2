@@ -81,3 +81,14 @@ Installed and active: independent monitoring every 5 min, Telegram warning/criti
 Both detached `screen` services survive closing ChatGPT but not reboot. The prepared systemd files still need a one-time privileged installation, not possible through the bridge's `no-new-privs` Ubuntu terminal.
 
 Verified on VPS: 32 Autopilot tests and 17 Bridge worker tests passed. The GitHub CI must also pass before calling the repository release validated.
+
+
+## Phase 4 — Offline sandbox isolation (2026-11-11)
+
+The VPS now has a verified **Bubblewrap** diagnostic sandbox. `safe_envelope.py` creates a minimal, strict allowlist summary of current health state. It never includes credentials, process environment, trade IDs, arbitrary logs, or original error text. Snapshot files are private (directory `0700`, JSON `0600`). The snapshot is mounted read-only into a separate PID/user/network/mount namespace by `isolated_runner.py`.
+
+The isolated process can see only a read-only snapshot plus its own read-only probe script and the minimum system Python runtime. `/home`, `/root`, and `/tmp` are private temporary filesystems; no host `/etc` is mounted. The sandbox has no network access (`--unshare-all`), Linux capabilities are dropped, and all externally derived content is reduced to fixed numeric/boolean/enumerated fields. The on-VPS tests confirmed hidden credential and Trader paths, read-only input, failed outbound network connectivity, and 6 dedicated isolation regression tests.
+
+A new diagnostic job `isolation` runs this proof automatically, scheduled every six hours in the existing durable jobs queue, and records `SANDBOX_ISOLATION_VERIFIED` or fails closed. Run manually through the queue by enqueueing the `isolation` job; do not bypass queue locks.
+
+**Important limitation:** This sandbox is deliberately **OFFLINE**. It does not run Codex, and automated Codex dispatch remains disabled. Using it for model-powered diagnostics will require a separately verified authentication broker or remote provider that does not expose tokens or sensitive host paths to the model, and security regression tests for that broker. Do **not** simply mount `~/.codex/auth.json` or pass an API key into an agent-enabled sandbox. No trading order, production code patch, or restart permission has been added.
