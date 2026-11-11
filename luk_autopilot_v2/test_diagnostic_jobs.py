@@ -23,6 +23,13 @@ class Tests(unittest.TestCase):
   self.assertEqual(jobs.one(),None)
  def test_invalid_job_rejected(self):
   with self.assertRaises(ValueError):jobs.add('exec arbitrary shell')
+ def test_warning_pending_needs_review(self):
+  def warn():
+   r=self.fake_health();r['severity']='WARNING';r['database']['pending_count']=1
+   return r
+  with patch.object(jobs.monitor,'snapshot',side_effect=warn):
+   jobs.add('health');r=jobs.one()
+  self.assertEqual(r['status'],'needs_review')
  def test_triage_needs_review_on_critical(self):
   def critical():
    r=self.fake_health();r['severity']='CRITICAL'
@@ -51,4 +58,31 @@ class Tests(unittest.TestCase):
   self.assertEqual(result['closed'],2)
   self.assertEqual(result['wins'],1)
   self.assertAlmostEqual(result['realized_pnl_usdt'],-.25)
+ def test_atomic_queue_cap(self):
+  with patch.object(jobs.monitor,'snapshot',side_effect=self.fake_health):
+   for _ in range(12):jobs.add('health')
+   with self.assertRaisesRegex(RuntimeError,'QUEUE_FULL'):
+    jobs.add('triage')
+   self.assertEqual(jobs.one()['status'],'done')
+   self.assertEqual(len(jobs.add('campaign')),32)
+ def test_dedup_scheduled(self):
+  self.assertTrue(jobs.scheduled('health',3600))
+  self.assertFalse(jobs.scheduled('health',3600))
+  self.assertEqual(jobs.summary()['counts']['queued'],1)
+ def test_symlink_rejected(self):
+  original=self.path/'original.db'
+  original.write_bytes(b'UNSAFE')
+  jobs.DB.symlink_to(original)
+  with self.assertRaisesRegex(RuntimeError,'UNSAFE_QUEUE_PATH'):
+   jobs.add('health')
+  self.assertEqual(original.read_bytes(),b'UNSAFE')
+ def test_daemon_flock_rejects_manual_worker(self):
+  import fcntl
+  # Use child process (flock is per open file description, not thread).
+  jobs.add('health')
+  with jobs.LOCK.open('a+') as f:
+   fcntl.flock(f.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+   with self.assertRaisesRegex(RuntimeError,'DAEMON_OWNS_QUEUE'):
+    jobs.guarded_one()
+  self.assertEqual(jobs.summary()['counts']['queued'],1)
 if __name__=='__main__':unittest.main(verbosity=2)
