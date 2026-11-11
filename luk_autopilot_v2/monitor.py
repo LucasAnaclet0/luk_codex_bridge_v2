@@ -76,7 +76,11 @@ def inspect_db():
   restricted=(c.execute("SELECT value FROM runtime_controls WHERE name='exchange_restricted'").fetchone()
               if control_exists else None)
   exchange_restricted=restricted is not None and restricted[0]=='1'
+  restricted_exists=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='restricted_symbols'").fetchone() is not None
+  restricted_pairs=([r[0] for r in c.execute('SELECT symbol FROM restricted_symbols ORDER BY symbol')]
+                    if restricted_exists else [])
  return {'orders':rows,'positions':positions,'closed_trades':closed,
+         'restricted_pairs':restricted_pairs,
          'exchange_restricted':exchange_restricted,
          'pending_count':len(pending),'quarantined_count':quarantine,
          'oldest_pending_age_seconds':max((age_utc(ts) for _,ts in pending),default=0),
