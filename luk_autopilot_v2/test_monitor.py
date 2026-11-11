@@ -33,6 +33,17 @@ class MonitorTests(unittest.TestCase):
   self.assertEqual(result['pending_count'],0)
   self.assertEqual(result['integrity'],'ok')
   self.assertEqual(self.db.read_bytes(),before)
+ def test_restricted_pair_is_informational_if_no_pending_or_global_hold(self):
+  with sqlite3.connect(self.db) as c:
+   c.execute('CREATE TABLE restricted_symbols(symbol TEXT PRIMARY KEY,reason TEXT,restricted_at TEXT)')
+   c.execute("INSERT INTO restricted_symbols VALUES ('OP/USDT','OKX_51155','2026-01-01')")
+  active={'active':True,'pid':42,'status':'running'}
+  with patch.object(ap,'service_state',return_value=active),patch.object(
+      ap,'inspect_logs',return_value={'cycle_age_seconds':10,'recent_errors':0}):
+   r=ap.snapshot()
+  self.assertEqual(r['severity'],'OK')
+  self.assertEqual(r['database']['restricted_pairs'],['OP/USDT'])
+  self.assertEqual(r['database']['quarantined_count'],1)
  def test_geographic_hold_is_alerted_and_quarantine_not_alerted_by_itself(self):
   with sqlite3.connect(self.db) as c:
    c.execute('CREATE TABLE runtime_controls(name TEXT PRIMARY KEY,value TEXT,reason TEXT,updated_at TEXT)')
