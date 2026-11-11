@@ -251,6 +251,58 @@ class V2OperatorOfflineTests(unittest.TestCase):
         self.assertIn("return 1", source["excerpt"])
         self.assertFalse(self.ops.exists(), "read-only source must not create ops")
 
+    def test_exchange_readonly_audit_shape_and_no_log_disclosure(self):
+        import json
+        service = {"ActiveState": "active", "MainPID": "567"}
+        processes = [{"pid": 567, "role": "trade_demo", "start_ticks": 123}]
+        result = json.dumps({"status": "READONLY_AUDIT_COMPLETED",
+                             "order_inj": "UNVERIFIED",
+                             "sol_balance": "QUERY_FAILED",
+                             "get_requests_only": True,
+                             "api_key": "MUST_NOT_RETURN"})
+        with (patch.object(mod, "_service_identity", return_value=(service, processes)),
+              patch.object(mod, "_demo_policy_proof", return_value=True),
+              patch.object(mod.subprocess, "run",
+                           return_value=subprocess.CompletedProcess([], 0, result, "SECRET_STDERR")) as runner):
+            answer = mod.run({"action": "exchange_audit_readonly"})
+            self.assertEqual(answer["result"]["status"], "READONLY_AUDIT_COMPLETED")
+            self.assertNotIn("api_key", str(answer))
+            self.assertNotIn("SECRET_STDERR", str(answer))
+            runner.assert_called_once()
+            args, kwargs = runner.call_args
+            self.assertEqual(args[0][:3],
+                             ["/home/ubuntu/luk_bot_trader/venv/bin/python", "-B", "-c"])
+            self.assertEqual(kwargs["cwd"], str(self.bot))
+            self.assertEqual(kwargs["timeout"], 45)
+            self.assertNotIn("shell", kwargs)
+
+    def test_exchange_readonly_requires_verified_trade_process(self):
+        with (patch.object(mod, "_service_identity", return_value=(
+                  {"ActiveState": "active", "MainPID": "567"},
+                  [{"pid": 568, "role": "telegram_menu"}])),
+              patch.object(mod.subprocess, "run") as command):
+            response = mod.run({"action": "exchange_audit_readonly"})
+            self.assertEqual(response["result"]["status"], "NO_GO")
+            command.assert_not_called()
+
+    def test_exchange_get_only_child_static_guards(self):
+        import ast
+        child = ast.parse(mod._EXCHANGE_READONLY_CHILD)
+        all_functions = {n.name for n in ast.walk(child) if isinstance(n, ast.FunctionDef)}
+        self.assertIn("get_only", all_functions)
+        self.assertIn("main", all_functions)
+        self.assertIn("safe_number", all_functions)
+        forbidden = {"create_order", "cancel_order", "create_market_order",
+                     "transfer", "withdraw", "place", "execute"}
+        called = {getattr(n.func, "attr", None) or getattr(n.func, "id", None)
+                  for n in ast.walk(child) if isinstance(n, ast.Call)}
+        self.assertFalse(forbidden.intersection(called))
+        self.assertIn("private_get_trade_order", called)
+        self.assertIn("private_get_account_balance", called)
+        self.assertIn("urlsplit", called)
+        self.assertIn("query_only", mod._EXCHANGE_READONLY_CHILD)
+        self.assertIn("NON_ALLOWED_READONLY_REQUEST", mod._EXCHANGE_READONLY_CHILD)
+
     def test_source_read_redacts_credential_lines(self):
         (self.bot / "core").mkdir()
         (self.bot / "core" / "engine.py").write_text(
