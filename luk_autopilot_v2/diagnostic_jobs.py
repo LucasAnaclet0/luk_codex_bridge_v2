@@ -20,6 +20,7 @@ def conn():
 def add(kind):
  if kind not in TYPES:raise ValueError('UNSUPPORTED_DIAGNOSTIC')
  with conn() as c:
+  c.execute('BEGIN IMMEDIATE')
   if c.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]>=12:
    raise RuntimeError('QUEUE_FULL')
   ident=uuid.uuid4().hex
@@ -51,7 +52,7 @@ def one():
   c.execute("UPDATE jobs SET status='running' WHERE id=? AND status='queued'",(ident,))
  try:
   data=report(kind)
-  state='needs_review' if data['severity']=='CRITICAL' else 'done'
+  state='needs_review' if data['severity'] in ('WARNING','CRITICAL') or data.get('pending',0) else 'done'
   result=json.dumps(data,ensure_ascii=False)
  except Exception as e:
   state='uncertain';result=json.dumps({'error_type':type(e).__name__,'no_auto_retry':True})
@@ -66,6 +67,18 @@ def summary():
   if j['result']:j['result']=json.loads(j['result'])
  return {'mode':'READ_ONLY_DIAGNOSTICS','auto_codex':False,'auto_trading':False,
          'counts':totals,'recent':latest}
+def scheduled(kind,age_seconds):
+ from datetime import timedelta
+ with conn() as c:
+  r=c.execute('SELECT created FROM jobs WHERE kind=? ORDER BY created DESC LIMIT 1',(kind,)).fetchone()
+  if r and (datetime.now(timezone.utc)-datetime.fromisoformat(r[0])).total_seconds()<age_seconds:
+   return False
+ try:
+  add(kind)
+  return True
+ except RuntimeError as exc:
+  if str(exc)=='QUEUE_FULL':return False
+  raise
 def daemon():
  if LOCK.is_symlink():raise RuntimeError('UNSAFE_LOCK')
  with LOCK.open('a+') as lock:
@@ -73,13 +86,23 @@ def daemon():
   os.chmod(LOCK,0o600)
   with conn() as c:
    c.execute("UPDATE jobs SET status='uncertain',finished=? WHERE status='running'",(now(),))
-  last=0
   while True:
-   if time.time()-last>=3600:
-    add('health');last=time.time()
-   for _ in range(12):
-    if one() is None:break
+   try:
+    scheduled('health',3600)
+    scheduled('campaign',21600)
+    state=monitor.read_state()
+    if state.get('severity') in ('WARNING','CRITICAL'):scheduled('triage',3600)
+    for _ in range(12):
+     if one() is None:break
+   except Exception as exc:
+    print('AUTOPILOT_QUEUE_EXCEPTION',type(exc).__name__,flush=True)
    time.sleep(60)
+def guarded_one():
+ if LOCK.is_symlink():raise RuntimeError('UNSAFE_LOCK')
+ with LOCK.open('a+') as lock:
+  try:fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+  except BlockingIOError:raise RuntimeError('DAEMON_OWNS_QUEUE')
+  return one()
 def main():
  parser=argparse.ArgumentParser()
  x=parser.add_mutually_exclusive_group(required=True)
@@ -88,7 +111,7 @@ def main():
  a=parser.parse_args()
  if os.getuid()!=1001:raise RuntimeError('WRONG_UID')
  if a.enqueue:print('QUEUED',a.enqueue,add(a.enqueue))
- elif a.once:print(json.dumps(one() or {'empty':True}))
+ elif a.once:print(json.dumps(guarded_one() or {'empty':True}))
  elif a.status:print(json.dumps(summary(),ensure_ascii=False))
  else:daemon()
 if __name__=='__main__':main()
