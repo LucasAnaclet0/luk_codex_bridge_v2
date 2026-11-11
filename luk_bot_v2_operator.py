@@ -435,7 +435,13 @@ def main():
             "SELECT cid,symbol,side,status FROM orders "
             "WHERE status IN ('PREPARED','UNKNOWN','OPEN')"
         ).fetchall()
-        positions = conn.execute("SELECT symbol,qty FROM positions").fetchall()
+        positions = conn.execute("SELECT symbol,qty,buy_cid FROM positions").fetchall()
+        sol_buy = conn.execute(
+            "SELECT o.exchange_id FROM positions p "
+            "JOIN orders o ON o.cid=p.buy_cid "
+            "WHERE p.symbol='SOL/USDT' AND o.symbol=p.symbol "
+            "AND o.side='buy' AND o.status='FILLED' LIMIT 2"
+        ).fetchall()
     finally:
         conn.close()
     if len(rows) > 25 or len(positions) > 25:
@@ -444,7 +450,7 @@ def main():
                    if r[1] == "INJ/USDT" and r[2] == "buy"]
     if len(pending_inj) > 1:
         return {"status": "UNVERIFIED", "reason": "INJ_DUPLICATE_PENDING"}
-    position_map = {str(sym): safe_number(qty) for sym, qty in positions}
+    position_map = {str(sym): safe_number(qty) for sym, qty, _ in positions}
     if any(qty is None for qty in position_map.values()):
         return {"status": "UNVERIFIED", "reason": "LEDGER_POSITION_INVALID"}
     # Only import the sanctioned V2 constructor: no daemon main or DB ledger.
@@ -457,7 +463,10 @@ def main():
             return {"status": "UNVERIFIED", "reason": "NOT_OKX"}
         if hasattr(ex, "session"):
             ex.session.max_redirects = 0
-        allowed = {"/api/v5/trade/order", "/api/v5/account/balance"}
+        allowed = {"/api/v5/trade/order", "/api/v5/account/balance",
+                   "/api/v5/trade/orders-history",
+                   "/api/v5/trade/orders-pending",
+                   "/api/v5/trade/fills-history"}
         original_fetch = ex.fetch
         observed_requests = []
 
@@ -471,7 +480,7 @@ def main():
                     parsed.path not in allowed):
                 raise RuntimeError("NON_ALLOWED_READONLY_REQUEST")
             observed_requests.append(parsed.path)
-            if len(observed_requests) > 3:
+            if len(observed_requests) > 6:
                 raise RuntimeError("READONLY_REQUEST_LIMIT")
             return original_fetch(url, method, headers, body)
 
@@ -509,6 +518,93 @@ def main():
             except Exception as exc:
                 report["order_inj"] = "QUERY_FAILED"
                 report["inj_exception_class"] = type(exc).__name__[:50]
+        # A 404/OrderNotFound is not a terminal order observation. Independently
+        # search the bounded SPOT history and pending endpoints by instrument,
+        # accepting only a uniquely matching full client identity.
+        if pending_inj:
+            cid = pending_inj[0][0]
+            for label, method in (
+                ("inj_order_history", "private_get_trade_orders_history"),
+                ("inj_open_orders", "private_get_trade_orders_pending"),
+            ):
+                try:
+                    response = getattr(ex, method)({
+                        "instType": "SPOT", "instId": "INJ-USDT", "limit": "100"
+                    })
+                    if not isinstance(response, dict) or str(response.get("code")) != "0":
+                        report[label] = "QUERY_UNVERIFIED"
+                        continue
+                    data = response.get("data")
+                    if not isinstance(data, list) or len(data) > 100:
+                        report[label] = "INVALID_RESPONSE"
+                        continue
+                    found = [item for item in data if isinstance(item, dict)
+                             and item.get("clOrdId") == cid
+                             and item.get("instId") == "INJ-USDT"
+                             and item.get("side") == "buy"
+                             and item.get("ordId")]
+                    if len(found) != 1:
+                        report[label] = "NO_UNIQUE_IDENTITY_MATCH"
+                        continue
+                    record = found[0]
+                    state = str(record.get("state") or "").lower()
+                    filled = safe_number(record.get("accFillSz"))
+                    if state == "filled" and filled is not None and filled > 0:
+                        report[label] = "CONFIRMED_FILLED"
+                        report["inj_filled_qty"] = filled
+                        report["order_inj"] = "POSITIVE_HISTORY_FILLED"
+                    elif state == "canceled" and filled == 0:
+                        report[label] = "CONFIRMED_CANCELED_ZERO_FILL"
+                        report["order_inj"] = "POSITIVE_HISTORY_CANCELED_ZERO_FILL"
+                    elif state in ("live", "partially_filled"):
+                        report[label] = "EXCHANGE_OPEN_ORDER"
+                        report["order_inj"] = "POSITIVE_OPEN_ORDER"
+                    else:
+                        report[label] = "MATCH_STATE_UNVERIFIED"
+                except Exception as exc:
+                    report[label] = "QUERY_FAILED"
+                    report[label + "_exception_class"] = type(exc).__name__[:50]
+        # Use ONLY the V2-owned SOL buy order ID to audit fees. Never disclose IDs.
+        if len(sol_buy) == 1 and isinstance(sol_buy[0][0], str) and sol_buy[0][0]:
+            try:
+                response = ex.private_get_trade_fills_history({
+                    "instType": "SPOT", "instId": "SOL-USDT",
+                    "ordId": sol_buy[0][0], "limit": "100"
+                })
+                fills = response.get("data") if isinstance(response, dict) else None
+                if (not isinstance(response, dict) or
+                        str(response.get("code")) != "0" or
+                        not isinstance(fills, list) or len(fills) > 100):
+                    report["sol_buy_fills"] = "QUERY_UNVERIFIED"
+                else:
+                    valid = [f for f in fills if isinstance(f, dict)
+                             and f.get("ordId") == sol_buy[0][0]
+                             and f.get("instId") == "SOL-USDT"]
+                    if not valid or len(valid) != len(fills):
+                        report["sol_buy_fills"] = "INCOMPLETE_OR_IDENTITY_MISMATCH"
+                    else:
+                        amounts = [safe_number(f.get("fillSz")) for f in valid]
+                        fees = [float(f.get("fee") or 0)
+                                if f.get("feeCcy") == "SOL" else 0.0
+                                for f in valid]
+                        if (any(v is None or v <= 0 for v in amounts)
+                                or any(not math.isfinite(fee) for fee in fees)):
+                            report["sol_buy_fills"] = "NONFINITE_FILL_OR_FEE"
+                        else:
+                            net = round(sum(amounts) + sum(fees), 9)
+                            report["sol_buy_fills"] = "OBSERVED"
+                            report["sol_net_qty_from_buy_fills"] = net
+                            report["sol_net_fills_covers_ledger"] = (
+                                net + 1e-9 >= position_map.get("SOL/USDT", float("inf")))
+                            # Funds may later be moved/sold; fills alone do not prove
+                            # the entire current free balance is V2-owned.
+                            report["ownership_proven"] = False
+            except Exception as exc:
+                report["sol_buy_fills"] = "QUERY_FAILED"
+                report["sol_buy_fills_exception_class"] = type(exc).__name__[:50]
+        else:
+            report["sol_buy_fills"] = "V2_BUY_ORDER_ID_UNVERIFIED"
+
         try:
             raw = ex.private_get_account_balance({})
             if isinstance(raw, dict) and str(raw.get("code")) == "0":
@@ -591,7 +687,11 @@ def _exchange_audit_readonly() -> dict:
               "sol_frozen", "sol_ledger_qty", "sol_free_covers_ledger",
               "sol_total_covers_ledger", "ownership_proven", "get_requests_only",
               "get_requests_count", "inj_exception_class",
-              "balance_exception_class", "exception_class"}
+              "balance_exception_class", "exception_class",
+              "inj_order_history", "inj_open_orders",
+              "inj_order_history_exception_class", "inj_open_orders_exception_class",
+              "sol_buy_fills", "sol_buy_fills_exception_class",
+              "sol_net_qty_from_buy_fills", "sol_net_fills_covers_ledger"}
     return {k: item[k] for k in fields if k in item}
 
 
