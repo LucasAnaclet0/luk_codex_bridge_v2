@@ -19,8 +19,8 @@ jobs:
           python - <<'PY'
           import ast
           from pathlib import Path
-          for p in ('luk_autopilot_v2/monitor.py','luk_autopilot_v2/test_monitor.py'):
+          for p in ('luk_autopilot_v2/monitor.py','luk_autopilot_v2/test_monitor.py','luk_autopilot_v2/diagnostic_jobs.py','luk_autopilot_v2/test_diagnostic_jobs.py'):
               ast.parse(Path(p).read_text(encoding='utf-8'),filename=p)
           print('AUTOPILOT_AST_OK')
           PY
-          python -m unittest discover -s luk_autopilot_v2 -p test_monitor.py -v
+          python -m unittest discover -s luk_autopilot_v2 -p 'test_*.py' -v
