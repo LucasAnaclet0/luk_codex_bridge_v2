@@ -45,4 +45,28 @@ python -B diagnostic_jobs.py --enqueue triage
 
 ### Safety and remaining phases
 
-Neither the monitor nor the job daemon executes trades, repairs code, restarts services, or calls Codex/LLMs automatically. Codex audits may be invoked separately by the user-facing assistant; future API integration requires explicit approvals, usage quotas, and bounded actions. A screen process may terminate on VPS reboot; a persistent systemd deployment is still unimplemented. Telegram alerts are handled by the existing `monitor.py`, not by the diagnostic queue. Quarantined INJ and venue-restricted OP and GRAM are preserved in the Demo trading ledger. A healthy service does not imply a profitable strategy.
+The monitor and queue never execute trades, repairs, or restarts. The new bounded Codex gateway can submit **read-only diagnostic** tasks on critical failures only, after persistence checks; it never applies changes. Codex audits may be invoked separately by the user-facing assistant; future API integration requires explicit approvals, usage quotas, and bounded actions. A screen process may terminate on VPS reboot; a persistent systemd deployment is still unimplemented. Telegram alerts are handled by the existing `monitor.py`, not by the diagnostic queue. Quarantined INJ and venue-restricted OP and GRAM are preserved in the Demo trading ledger. A healthy service does not imply a profitable strategy.
+
+
+## Phase 3 — Intelligent diagnostic gateway (operational)
+
+`intelligent.py` is called by the running `diagnostic_jobs.py` service. It recognizes only fixed error codes from `monitor.py` (not untrusted log lines), requires a *fresh* snapshot, two distinct observations and at least ten minutes of persistent criticality, and reserves at most **one Codex diagnosis per UTC day**. It creates the task in `bridge.sqlite3` using one SQLite `BEGIN IMMEDIATE` transaction with a check for conflicting, running or uncertain tasks. An ambiguous submission permanently blocks a retry until an explicit review. Recovery resets unsent incident observation counts.
+
+The preexisting Codex bridge worker processes the task and its Telegram notifier sends status/results. The installed VPS `worker.py` has an additional sandbox pin: prompts beginning with the exact `LUK_AUTOPILOT_READONLY_V2\\n` marker are forced to `codex exec --sandbox read-only`. The live-only worker integration is preserved as `worker_readonly_integration.patch`, because the root `worker.py` currently found on this GitHub development branch is an older, *different* version: **do not overwrite the live worker with that old file**. Worker regression tests (17) passed on VPS. The gateway uses Codex only for diagnosis/recommendations; no code deployments or trading orders are permitted by this integration.
+
+The full autonomous code-changing/restarting vision remains unimplemented and requires an explicit action authorization and a tested DEV-to-live transaction. The service state `OK` is not proof of profitable strategies or exchange order fills.
+
+## Persistence after VPS reboot — prepared, not yet enabled
+
+Both monitor and jobs are running in detached `screen` sessions. This survives closing ChatGPT but **not a VPS reboot**. These deployment-ready unit templates were prepared and checked:
+- `systemd/luk-autopilot-v2-monitor.service`
+- `systemd/luk-autopilot-v2-jobs.service`
+- `systemd/install_once.sh`
+
+A one-time normal SSH session with root/sudo privileges is needed to enable the services, because the ChatGPT terminal uses `no-new-privs` and cannot modify `/etc/systemd/system` or enable system lingering. The installer **enables for the next boot only**, without starting duplicate daemons or restarting trading services. The Codex worker's existing `screen` supervisor also needs its own boot-persistent service if automatic Codex task processing must survive reboot. Do not claim that component is boot-safe until installed and tested.
+
+### Useful status commands (read-only)
+```
+python3 -B /home/ubuntu/luk_codex_bridge_v2/luk_autopilot_v2/monitor.py --status
+python3 -B /home/ubuntu/luk_codex_bridge_v2/luk_autopilot_v2/diagnostic_jobs.py --status
+```
