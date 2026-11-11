@@ -1,0 +1,22 @@
+--- a/worker.py
++++ b/worker.py
+@@ -435,11 +435,18 @@
+         "LANG": "C.UTF-8",
+         "LC_ALL": "C.UTF-8",
+     }
++    # Autopilot's machine-generated proposals are constrained by the CLI
++    # sandbox, not merely by the model's textual instructions.
++    sandbox_mode = (
++        "read-only"
++        if isinstance(prompt, str) and prompt.startswith("LUK_AUTOPILOT_READONLY_V2\n")
++        else "workspace-write"
++    )
+     try:
+         stdout, _stderr, returncode = _run_bounded_process(
+             [
+                 str(codex_path), "exec", "--ephemeral",
+-                "--sandbox", "workspace-write",
++                "--sandbox", sandbox_mode,
+                 "-c", "sandbox_workspace_write.writable_roots=[]",
+                 "-c", "sandbox_workspace_write.network_access=false",
+                 "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
