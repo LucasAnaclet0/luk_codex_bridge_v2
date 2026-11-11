@@ -4,6 +4,7 @@ import argparse,fcntl,json,os,sqlite3,time,uuid
 from datetime import datetime,timezone
 from pathlib import Path
 import monitor
+import intelligent
 BASE=Path(__file__).resolve().parent
 DB=BASE/'diagnostics.sqlite3'
 LOCK=BASE/'diagnostics.lock'
@@ -24,7 +25,7 @@ def add(kind):
   if c.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]>=12:
    raise RuntimeError('QUEUE_FULL')
   ident=uuid.uuid4().hex
-  c.execute('INSERT INTO jobs(id,kind,status,created) VALUES (?,?,?,?)',(ident,kind,'queued',now()))
+  c.execute('INSERT INTO jobs(id,kind,status,created) VALUES (?,,?,?)',(ident,kind,'queued',now()))
  return ident
 def report(kind):
  s=monitor.snapshot()
@@ -35,7 +36,7 @@ def report(kind):
       'closed':d.get('closed_trades'),'restricted_pairs':d.get('restricted_pairs',[]),
       'actions_executed':[],'codex_executed':False}
  if kind=='campaign':
-  with sqlite3.connect('file:'+str(monitor.DB)+'?mode=ro',uri=True,timeout=5) as c:
+  with sqlite3.connect('file:'+str(monitor.DB)+'mode=ro',uri=True,timeout=5) as c:
    n,pnl,wins=c.execute('SELECT count(*),coalesce(sum(pnl),0),coalesce(sum(CASE WHEN pnl>0 THEN 1 ELSE 0 END),0) FROM closed_trades').fetchone()
   out.update({'closed':n,'target':100,'realized_pnl_usdt':round(pnl,5),'wins':wins})
  if kind=='triage':
@@ -57,7 +58,7 @@ def one():
  except Exception as e:
   state='uncertain';result=json.dumps({'error_type':type(e).__name__,'no_auto_retry':True})
  with conn() as c:
-  c.execute("UPDATE jobs SET status=?,finished=?,result=? WHERE id=? AND status='running'",(state,now(),result,ident))
+  c.execute("UPDATE jobs SET status=?,finished=?,result=? WHERE id= AND status='running'",(state,now(),result,ident))
  return {'job_id':ident,'type':kind,'status':state}
 def summary():
  with conn() as c:
@@ -65,7 +66,7 @@ def summary():
   latest=[dict(r) for r in c.execute('SELECT kind,status,created,finished,result FROM jobs ORDER BY created DESC LIMIT 3')]
  for j in latest:
   if j['result']:j['result']=json.loads(j['result'])
- return {'mode':'READ_ONLY_DIAGNOSTICS','auto_codex':False,'auto_trading':False,
+ return {'mode':'SAFE_DIAGNOSTICS_CODEX_ON_CRITICAL','auto_codex':'MAX_ONE_DIAGNOSIS_PER_DAY','auto_trading':False,
          'counts':totals,'recent':latest}
 def scheduled(kind,age_seconds):
  from datetime import timedelta
@@ -85,13 +86,16 @@ def daemon():
   fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
   os.chmod(LOCK,0o600)
   with conn() as c:
-   c.execute("UPDATE jobs SET status='uncertain',finished=? WHERE status='running'",(now(),))
+   c.execute("UPDATE jobs SET status='uncertain',finished= WHERE status='running'",(now(),))
   while True:
    try:
     scheduled('health',3600)
     scheduled('campaign',21600)
     state=monitor.read_state()
     if state.get('severity') in ('WARNING','CRITICAL'):scheduled('triage',3600)
+    decision=intelligent.tick(state)
+    if decision.get('status') in ('CODEX_DIAGNOSIS_QUEUED','SUBMISSION_UNCERTAIN_NO_RETRY'):
+     print('AUTOPILOT_CODEX_GATE',json.dumps(decision),flush=True)
     for _ in range(12):
      if one() is None:break
    except Exception as exc:
