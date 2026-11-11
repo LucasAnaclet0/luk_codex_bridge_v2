@@ -13,6 +13,7 @@ class GatewayTests(unittest.TestCase):
    p=patch.object(intelligent,key,value);p.start();self.addCleanup(p.stop)
   with sqlite3.connect(intelligent.BRIDGE_DB) as c:
    c.execute('CREATE TABLE tasks(id TEXT,status TEXT,action TEXT,prompt TEXT,created_at TEXT,updated_at TEXT)')
+  p=patch.object(intelligent,'AUTOMATIC_CODEX_ENABLED',True);p.start();self.addCleanup(p.stop)
   self.report={'time_utc':datetime.now(timezone.utc).isoformat(),'severity':'CRITICAL','errors':['V2_CYCLES_STALE'],'warnings':[],
     'services':{'trade':{'active':True},'bridge':{'active':True}},
     'database':{'pending_count':0,'closed_trades':4,'quarantined_count':3,'integrity':'ok'}}
@@ -68,6 +69,11 @@ class GatewayTests(unittest.TestCase):
     self.assertEqual(c.execute('SELECT status,action FROM tasks').fetchone(),('pending','self_test'))
    with self.assertRaisesRegex(RuntimeError,'BRIDGE_BUSY'):
     intelligent.submit_readonly_to_bridge(prompt)
+ def test_autonomous_codex_dispatch_fails_closed_by_default(self):
+  with patch.object(intelligent,'AUTOMATIC_CODEX_ENABLED',False):
+   self.assertEqual(intelligent.tick(self.report)['status'],
+                    'CODEX_AUTOMATION_DISABLED_SECURITY_GATE')
+   self.assertEqual(intelligent.status()['quota'],{})
  def test_noncritical_no_usage(self):
   self.report['severity']='WARNING'
   self.assertEqual(intelligent.tick(self.report)['status'],'NO_ELIGIBLE_CRITICAL_ERROR')

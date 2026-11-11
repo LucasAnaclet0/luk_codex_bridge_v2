@@ -15,6 +15,7 @@ ELIGIBLE=frozenset({
     'V2_UNRESOLVED_ORDERS_OLDER_10_MIN','V2_DATABASE_UNVERIFIED',
 })
 DAY_CAP=1
+AUTOMATIC_CODEX_ENABLED=False  # security audit NO-GO: read-only still can read local secrets
 MIN_AGE_SECONDS=600
 DAY_SECONDS=86400
 
@@ -121,6 +122,8 @@ def tick(report,submit=None):
   with connection() as c:
    c.execute("UPDATE incidents SET status='recovered',observations=0,last_snapshot_at=NULL WHERE status='observing'")
   return {'status':'NO_ELIGIBLE_CRITICAL_ERROR'}
+ if submit is None and not AUTOMATIC_CODEX_ENABLED:
+  return {'status':'CODEX_AUTOMATION_DISABLED_SECURITY_GATE'}
  fingerprint=hashlib.sha256(('|'.join(inc)).encode()).hexdigest()
  with connection() as c:
   c.execute('BEGIN IMMEDIATE')
@@ -176,7 +179,7 @@ def status():
   incidents=[dict(r) for r in c.execute(
      'SELECT fingerprint,first_seen,last_seen,observations,claimed_at,bridge_task_id,status FROM incidents ORDER BY last_seen DESC LIMIT 5')]
   daily=dict(c.execute('SELECT day_utc,claims FROM daily_quota ORDER BY day_utc DESC LIMIT 3'))
- return {'enabled':True,'mode':'DIAGNOSIS_READONLY_ONLY','daily_cap':DAY_CAP,
+ return {'enabled':AUTOMATIC_CODEX_ENABLED,'mode':'MANUAL_CODEX_UNTIL_HARD_ISOLATION','daily_cap':DAY_CAP,
          'automatic_deploy':False,'automatic_trading':False,
          'recent_incidents':incidents,'quota':daily}
 

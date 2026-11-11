@@ -66,7 +66,7 @@ def summary():
   latest=[dict(r) for r in c.execute('SELECT kind,status,created,finished,result FROM jobs ORDER BY created DESC LIMIT 3')]
  for j in latest:
   if j['result']:j['result']=json.loads(j['result'])
- return {'mode':'SAFE_DIAGNOSTICS_CODEX_ON_CRITICAL','auto_codex':'MAX_ONE_DIAGNOSIS_PER_DAY','auto_trading':False,
+ return {'mode':'SAFE_DIAGNOSTICS_MANUAL_CODEX','auto_codex':False,'codex_gateway':'DISABLED_UNTIL_STRONG_ISOLATION','auto_trading':False,
          'counts':totals,'recent':latest}
 def scheduled(kind,age_seconds):
  from datetime import timedelta
