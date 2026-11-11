@@ -57,6 +57,30 @@ class MonitorTests(unittest.TestCase):
   self.assertIn('OPEN_POSITIONS_CANNOT_AUTO_EXIT_EXCHANGE_RESTRICTION',r['errors'])
   self.assertTrue(r['database']['exchange_restricted'])
   self.assertNotIn('V2_QUARANTINE_REVIEW_REQUIRED',r['warnings'])
+ def test_recent_pending_is_warning_not_silent_ok(self):
+  from datetime import datetime,timezone
+  at=datetime.now(timezone.utc).isoformat()
+  with sqlite3.connect(self.db) as c:
+   c.execute("INSERT INTO orders VALUES ('PREPARED',?)",(at,))
+  active={'active':True,'pid':4,'status':'running'}
+  with patch.object(ap,'service_state',return_value=active),patch.object(
+      ap,'inspect_logs',return_value={'cycle_age_seconds':10,'recent_errors':0}):
+   r=ap.snapshot()
+  self.assertEqual(r['severity'],'WARNING')
+  self.assertIn('V2_ORDER_PENDING_EXCHANGE_CONFIRMATION',r['warnings'])
+ def test_new_restricted_pair_warning_only_once(self):
+  with sqlite3.connect(self.db) as c:
+   c.execute('CREATE TABLE restricted_symbols(symbol TEXT PRIMARY KEY,reason TEXT,restricted_at TEXT)')
+   c.execute("INSERT INTO restricted_symbols VALUES ('OP/USDT','OKX_51155','2026-01-01')")
+   c.execute("INSERT INTO restricted_symbols VALUES ('GRAM/USDT','OKX_51155','2026-01-01')")
+  ap.atomic_json(ap.STATE,{'database':{'restricted_pairs':['OP/USDT']}})
+  active={'active':True,'pid':4,'status':'running'}
+  with patch.object(ap,'service_state',return_value=active),patch.object(
+      ap,'inspect_logs',return_value={'cycle_age_seconds':10,'recent_errors':0}):
+   initial=ap.run_once(no_telegram=True)
+   after=ap.snapshot()
+  self.assertIn('OKX_NEW_RESTRICTED_PAIRS:GRAM/USDT',initial['warnings'])
+  self.assertNotIn('OKX_NEW_RESTRICTED_PAIRS:GRAM/USDT',after['warnings'])
  def test_pending_age_and_severity(self):
   with sqlite3.connect(self.db) as c:
    c.execute("INSERT INTO orders VALUES ('UNKNOWN','2026-01-01T00:00:00+00:00')")
