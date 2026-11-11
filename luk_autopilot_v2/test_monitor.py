@@ -33,6 +33,19 @@ class MonitorTests(unittest.TestCase):
   self.assertEqual(result['pending_count'],0)
   self.assertEqual(result['integrity'],'ok')
   self.assertEqual(self.db.read_bytes(),before)
+ def test_geographic_hold_is_alerted_and_quarantine_not_alerted_by_itself(self):
+  with sqlite3.connect(self.db) as c:
+   c.execute('CREATE TABLE runtime_controls(name TEXT PRIMARY KEY,value TEXT,reason TEXT,updated_at TEXT)')
+   c.execute("INSERT INTO runtime_controls VALUES ('exchange_restricted','1','OKX_RESTRICTED_LOCATION','2026-01-01')")
+   c.execute("INSERT INTO positions VALUES ('BTC/USDT')")
+  active={'active':True,'pid':42,'status':'running'}
+  with patch.object(ap,'service_state',return_value=active),patch.object(
+      ap,'inspect_logs',return_value={'cycle_age_seconds':15,'recent_errors':0}):
+   r=ap.snapshot()
+  self.assertEqual(r['severity'],'CRITICAL')
+  self.assertIn('OPEN_POSITIONS_CANNOT_AUTO_EXIT_EXCHANGE_RESTRICTION',r['errors'])
+  self.assertTrue(r['database']['exchange_restricted'])
+  self.assertNotIn('V2_QUARANTINE_REVIEW_REQUIRED',r['warnings'])
  def test_pending_age_and_severity(self):
   with sqlite3.connect(self.db) as c:
    c.execute("INSERT INTO orders VALUES ('UNKNOWN','2026-01-01T00:00:00+00:00')")
