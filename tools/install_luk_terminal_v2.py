@@ -23,9 +23,9 @@ MCP = BRIDGE / "mcp_server.py"
 TERMINAL = BRIDGE / "luk_vps_terminal.py"
 SERVICE = "luk-codex-mcp.service"
 MARKER = "# LUK_TERMINAL_V2_PLUGIN"
-PINNED_BLOB = "1468157f6bbe87e508a8e739dc4b6bb29c2e4fc4"
+PINNED_BLOB = "86f50c39c539f8d35bb2a45d750b65c931d069c2"
 MODULE_URL = ("https://raw.githubusercontent.com/LucasAnaclet0/"
-              "luk_codex_bridge_v2/2efd1088f7603ac24589004114c22bdbd0c01a49/"
+              "luk_codex_bridge_v2/1ec103c153e34c59024bc9f724c963528b87d576/"
               "luk_vps_terminal.py")
 
 HELPERS = '''
