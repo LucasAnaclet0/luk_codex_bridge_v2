@@ -87,8 +87,13 @@ def inspect_db():
          'integrity':'ok'}
 
 def age_utc(iso):
- try:return max(0,int((datetime.now(timezone.utc)-datetime.fromisoformat(iso)).total_seconds()))
- except (ValueError,TypeError):return 0
+ # Missing/naive timestamps are *not* proof an order is new.
+ # Treat unparseable intent age as stale and block escalation-safe.
+ try:
+  created=datetime.fromisoformat(iso)
+  if created.tzinfo is None:return 10**9
+  return max(0,int((datetime.now(timezone.utc)-created).total_seconds()))
+ except (ValueError,TypeError):return 10**9
 
 def inspect_logs():
  if LOG.is_symlink() or not LOG.is_file():return {'cycle_age_seconds':None,'recent_errors':0}
@@ -161,7 +166,7 @@ def alert_message(report):
          'Ocorrências: '+(', '.join(reasons) or 'nenhuma')+'\n'
          'Bot: '+('ativo' if report['services']['trade']['active'] else 'inativo')
          +' | Bridge: '+('ativa' if report['services']['bridge']['active'] else 'inativa')+'\n'
-         'Campanha: '+str(metrics.get('closed_trades','?'))+'/100'
+         'Campanha: '+str(metrics.get('closed_trades',''))+'/100'
          ' | Posições: '+str(metrics.get('positions','?'))+'\n'
          'Estado: '+str(STATE))
 
