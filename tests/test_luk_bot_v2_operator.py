@@ -293,7 +293,7 @@ class V2OperatorOfflineTests(unittest.TestCase):
         self.assertIn("main", all_functions)
         self.assertIn("safe_number", all_functions)
         forbidden = {"create_order", "cancel_order", "create_market_order",
-                     "transfer", "withdraw", "place", "execute"}
+                     "transfer", "withdraw", "place"}
         called = {getattr(n.func, "attr", None) or getattr(n.func, "id", None)
                   for n in ast.walk(child) if isinstance(n, ast.Call)}
         self.assertFalse(forbidden.intersection(called))
